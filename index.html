@@ -261,6 +261,10 @@
 
         let currentSubject = 'general';
         let currentEntry = null;
+        let extraIndices = [];
+        let timelapseBackup = null;
+        let needsHeal = false;
+        function unionIdx(a, b) { return Array.from(new Set([...(a || []), ...(b || [])])); }
         const wikiCache = new Map();
         const wikiCounts = new Map();
         const lastPersisted = new Map();
@@ -520,6 +524,7 @@
 
             isTimelapsePlaying = true;
             const tempGrid = new Uint8Array(userGrid);
+            timelapseBackup = tempGrid;
             userGrid.fill(0);
 
             let step = 0;
@@ -536,6 +541,7 @@
                 if (step >= moveHistory.length) {
                     clearInterval(timelapseInterval);
                     userGrid.set(tempGrid);
+                    timelapseBackup = null;
                     isTimelapsePlaying = false;
                     draw();
                 }
@@ -543,12 +549,16 @@
         }
 
         function skipTimelapse() {
-            if (timelapseInterval) clearInterval(timelapseInterval);
-            for (let idx of moveHistory) {
-                userGrid[idx] = answerGrid[idx];
-            }
-            isTimelapsePlaying = false;
+            stopTimelapse();
             draw();
+        }
+
+        // Ends any running timelapse and restores the real progress grid.
+        function stopTimelapse() {
+            if (timelapseInterval) clearInterval(timelapseInterval);
+            if (isTimelapsePlaying && timelapseBackup) userGrid.set(timelapseBackup);
+            timelapseBackup = null;
+            isTimelapsePlaying = false;
         }
 
         function setupRealtimeSubscription() {
@@ -963,6 +973,7 @@
         }
 
         async function initLevel(levelIndex, overrideUrl = null) {
+            stopTimelapse();
             isLevelLoaded = false;
             levelAlreadyCompleted = false;
             hintMarker = null;
@@ -1028,6 +1039,10 @@
             startDashboardTimer();
             applySettingsUI();
             updateLikeBtn();
+            if (needsHeal) {
+                needsHeal = false;
+                saveState(true);
+            }
         }
 
         function loadPhotoFromUrl(url) {
@@ -1429,9 +1444,11 @@
             if (!isLevelLoaded) return;
 
             const coloredIndices = [];
-            for (let i = 0; i < userGrid.length; i++) {
-                if (userGrid[i] !== 0) coloredIndices.push(i);
+            const sourceGrid = (isTimelapsePlaying && timelapseBackup) ? timelapseBackup : userGrid;
+            for (let i = 0; i < sourceGrid.length; i++) {
+                if (sourceGrid[i] !== 0) coloredIndices.push(i);
             }
+            for (const e of extraIndices) coloredIndices.push(e);
             const key = getStorageKey(currentCategory, currentLevel);
             storeIdx(key, coloredIndices);
 
@@ -1448,8 +1465,11 @@
         async function loadState() {
             userGrid.fill(0);
             moveHistory = [];
+            extraIndices = [];
+            needsHeal = false;
             const key = getStorageKey(currentCategory, currentLevel);
-            let coloredIndices = [];
+            let cloudIndices = null;
+            let localIndices = [];
 
             if (currentUser && supabaseClient) {
                 const { data, error } = await supabaseClient.from('user_progress')
@@ -1460,45 +1480,45 @@
                     .maybeSingle();
 
                 if (!error && data) {
-                    coloredIndices = data.colored_indices || [];
+                    cloudIndices = data.colored_indices || [];
                     if (data.custom_url && currentCategory === 'custom') customImageUrl = data.custom_url;
-                    storeIdx(key, coloredIndices);
                     lastPersisted.set(`${currentUser.id}_${dbCat(currentCategory)}_${currentLevel}`,
-                        packIdx(coloredIndices) + '|' + (data.custom_url || ''));
+                        packIdx(cloudIndices) + '|' + (data.custom_url || ''));
                 }
             }
 
-            if (coloredIndices.length === 0) {
-                const userId = currentUser ? currentUser.id : 'guest';
-                const keyCandidates = [
-                    key,
-                    `grid_save_${userId}_${dbCat(currentCategory)}_${currentLevel}`,
-                    `grid_save_guest_${dbCat(currentCategory)}_${currentLevel}_${GRID_SIZE}`,
-                    `grid_save_guest_${dbCat(currentCategory)}_${currentLevel}`
-                ];
-
-                for (const candidateKey of keyCandidates) {
-                    const raw = localStorage.getItem(candidateKey);
-                    if (raw) {
-                        try {
-                            const parsed = unpackIdx(raw);
-                            if (parsed && parsed.length > 0) {
-                                coloredIndices = parsed;
-                                break;
-                            }
-                        } catch(e) {}
-                    }
+            const userId = currentUser ? currentUser.id : 'guest';
+            const keyCandidates = [
+                key,
+                `grid_save_${userId}_${dbCat(currentCategory)}_${currentLevel}`,
+                `grid_save_guest_${dbCat(currentCategory)}_${currentLevel}_${GRID_SIZE}`,
+                `grid_save_guest_${dbCat(currentCategory)}_${currentLevel}`
+            ];
+            for (const candidateKey of keyCandidates) {
+                const raw = localStorage.getItem(candidateKey);
+                if (raw) {
+                    const parsed = unpackIdx(raw);
+                    if (parsed.length > 0) { localIndices = parsed; break; }
                 }
             }
 
-            for (let idx of coloredIndices) {
-                if (idx < userGrid.length) {
+            // Progress only ever grows on load: a stale cloud or local copy must not erase the other.
+            const coloredIndices = unionIdx(cloudIndices, localIndices);
+            if (cloudIndices && coloredIndices.length > cloudIndices.length) needsHeal = true;
+            if (coloredIndices.length > localIndices.length) storeIdx(key, coloredIndices);
+
+            let filled = 0;
+            for (const idx of coloredIndices) {
+                if (idx >= 0 && idx < userGrid.length && answerGrid[idx] !== 0) {
                     userGrid[idx] = answerGrid[idx];
                     moveHistory.push(idx);
+                    filled++;
+                } else {
+                    extraIndices.push(idx);
                 }
             }
 
-            if (coloredIndices.length >= GRID_SIZE * GRID_SIZE) {
+            if (filled >= GRID_SIZE * GRID_SIZE) {
                 levelAlreadyCompleted = true;
             }
         }
@@ -1756,8 +1776,10 @@
                         }
                         const indices = row.colored_indices || [];
                         if (indices.length > 0) {
-                            progressMap.set(row.level_index, { count: indices.length, indices, customUrl: row.custom_url });
-                            storeIdx(`${prefix}${row.level_index}_${GRID_SIZE}`, indices);
+                            const prev = progressMap.get(row.level_index);
+                            const merged = prev ? unionIdx(prev.indices, indices) : indices;
+                            progressMap.set(row.level_index, { count: merged.length, indices: merged, customUrl: row.custom_url || (prev && prev.customUrl) || null });
+                            if (!prev || merged.length > prev.indices.length) storeIdx(`${prefix}${row.level_index}_${GRID_SIZE}`, merged);
                         }
                     }
                 }
@@ -1766,8 +1788,9 @@
             progressMap.forEach((data, levelIdx) => {
                 if (activeTheme !== 'all' && getLevelTheme(levelIdx) !== activeTheme) return;
 
-                const card = createLevelCard(levelIdx, data.count, data.indices, data.customUrl);
-                if (data.count >= GRID_SIZE * GRID_SIZE) completed.appendChild(card);
+                const shownCount = data.indices.filter(n => n < GRID_SIZE * GRID_SIZE).length;
+                const card = createLevelCard(levelIdx, shownCount, data.indices, data.customUrl);
+                if (shownCount >= GRID_SIZE * GRID_SIZE) completed.appendChild(card);
                 else inProgress.appendChild(card);
             });
 
@@ -1793,6 +1816,7 @@
 
         async function returnToGallery() {
             clearInterval(timerInterval);
+            stopTimelapse();
             await saveState(true);
             isLevelLoaded = false;
             hintMarker = null;
@@ -1804,6 +1828,7 @@
 
         async function moveLevel(dir) {
             clearInterval(timerInterval);
+            stopTimelapse();
             await saveState(true);
             isLevelLoaded = false;
             hintMarker = null;
