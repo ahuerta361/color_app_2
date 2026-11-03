@@ -249,6 +249,48 @@
         let hintMarker = null;
         let hintAnimFrame = null;
 
+        let currentSubject = 'general';
+        const wikiCache = new Map();
+        const wikiCounts = new Map();
+        const lastPersisted = new Map();
+
+        // Photography progress is namespaced per subject. 'general' keeps the legacy 'photography' key.
+        function dbCat(category) {
+            return (category === 'photography' && currentSubject !== 'general')
+                ? `photography-${currentSubject}` : category;
+        }
+
+        // Compact index encoding for localStorage: "0-14,20,22-40". Reads legacy JSON arrays too.
+        function packIdx(arr) {
+            const a = Array.from(arr).sort((x, y) => x - y);
+            const out = [];
+            for (let i = 0; i < a.length;) {
+                let j = i;
+                while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++;
+                out.push(j > i ? `${a[i]}-${a[j]}` : `${a[i]}`);
+                i = j + 1;
+            }
+            return out.join(',');
+        }
+        function unpackIdx(raw) {
+            if (!raw) return [];
+            if (raw[0] === '[') {
+                try { const v = JSON.parse(raw); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+            }
+            const out = [];
+            for (const part of raw.split(',')) {
+                const [a, b] = part.split('-').map(Number);
+                if (isNaN(a)) continue;
+                const end = isNaN(b) ? a : b;
+                for (let k = a; k <= end; k++) out.push(k);
+            }
+            return out;
+        }
+        function storeIdx(key, indices) {
+            try { localStorage.setItem(key, packIdx(indices)); }
+            catch (e) { console.warn("Storage quota exceeded", e); }
+        }
+
         function loadSettings() {
             const saved = localStorage.getItem('studio_settings');
             if (saved) {
@@ -320,7 +362,7 @@
 
         function getStorageKey(category, levelIndex) {
             const userId = currentUser ? currentUser.id : 'guest';
-            return `grid_save_${userId}_${category}_${levelIndex}_${GRID_SIZE}`;
+            return `grid_save_${userId}_${dbCat(category)}_${levelIndex}_${GRID_SIZE}`;
         }
 
         function getLevelTheme(levelIdx) {
@@ -623,8 +665,9 @@
             btn.classList.toggle('active', isPanMode);
         }
 
-        async function fetchWikimediaImageUrl(levelIndex) {
-            const subject = document.getElementById('subject-select').value;
+        function getWikiPages(subject) {
+            const cacheKey = `${subject}_${GRID_SIZE}`;
+            if (wikiCache.has(cacheKey)) return wikiCache.get(cacheKey);
             const categoryMap = {
                 general: 'Category:Featured_pictures_on_Wikimedia_Commons',
                 landscape: 'Category:Featured_landscapes',
@@ -632,34 +675,48 @@
                 architecture: 'Category:Featured_architecture',
                 abstract: 'Category:Abstract_art'
             };
-
-            const catTitle = categoryMap[subject] || categoryMap.general;
-            const endpoint = 'https://commons.wikimedia.org/w/api.php';
             const params = new URLSearchParams({
                 action: 'query',
                 generator: 'categorymembers',
-                gcmtitle: catTitle,
+                gcmtitle: categoryMap[subject] || categoryMap.general,
                 gcmtype: 'file',
-                gcmlimit: '50',
+                gcmlimit: '500',
                 prop: 'imageinfo',
-                iiprop: 'url',
+                iiprop: 'url|mime',
                 iiurlwidth: GRID_SIZE.toString(),
                 format: 'json',
                 origin: '*'
             });
+            const promise = (async () => {
+                const response = await fetch(`https://commons.wikimedia.org/w/api.php?${params.toString()}`);
+                if (!response.ok) throw new Error(`Wikimedia API error: ${response.status}`);
+                const data = await response.json();
+                if (!data.query || !data.query.pages) throw new Error('No Wikimedia media found');
+                const okMime = /^image\/(jpeg|png|webp)$/;
+                const urls = Object.values(data.query.pages)
+                    .filter(pg => pg.imageinfo && pg.imageinfo[0] && okMime.test(pg.imageinfo[0].mime || ''))
+                    .sort((a, b) => (a.title || '').localeCompare(b.title || ''))
+                    .map(pg => pg.imageinfo[0].thumburl || pg.imageinfo[0].url);
+                if (!urls.length) throw new Error('No usable Wikimedia images');
+                wikiCounts.set(cacheKey, urls.length);
+                return urls;
+            })();
+            wikiCache.set(cacheKey, promise);
+            promise.catch(() => wikiCache.delete(cacheKey));
+            return promise;
+        }
 
-            const response = await fetch(`${endpoint}?${params.toString()}`);
-            if (!response.ok) throw new Error(`Wikimedia API error: ${response.status}`);
-            
-            const data = await response.json();
-            if (!data.query || !data.query.pages) throw new Error('No Wikimedia media found');
-            
-            const pages = Object.values(data.query.pages);
-            const selectedPage = pages[levelIndex % pages.length];
-            const info = selectedPage.imageinfo && selectedPage.imageinfo[0];
-            
-            if (!info) throw new Error('Invalid Wikimedia image entry');
-            return info.thumburl || info.url;
+        async function fetchWikimediaImageUrl(levelIndex) {
+            const urls = await getWikiPages(currentSubject);
+            return urls[levelIndex % urls.length];
+        }
+
+        // Number of distinct levels available for the active category.
+        function levelCount() {
+            if (currentCategory === 'photography') {
+                return wikiCounts.get(`${currentSubject}_${GRID_SIZE}`) || TOTAL_LEVELS;
+            }
+            return TOTAL_LEVELS;
         }
 
         async function initLevel(levelIndex, overrideUrl = null) {
@@ -668,6 +725,7 @@
             hintMarker = null;
             moveHistory = [];
             currentLevel = levelIndex;
+            currentSubject = document.getElementById('subject-select').value;
             document.getElementById('level-title').textContent = `${currentCategory.toUpperCase()} #${currentLevel + 1} (${GRID_SIZE}x${GRID_SIZE})`;
             
             answerGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
@@ -676,7 +734,7 @@
             try {
                 if (currentCategory === 'photography') {
                     const wikiUrl = await fetchWikimediaImageUrl(currentLevel);
-                    await loadPhotoFromUrl(wikiUrl);
+                    if (!(await loadPhotoFromUrl(wikiUrl))) generateDeterministicData(currentLevel);
                 } else if (currentCategory === 'custom') {
                     const userId = currentUser ? currentUser.id : 'guest';
                     let url = overrideUrl;
@@ -698,9 +756,16 @@
                     if (!url) {
                         generateDeterministicData(currentLevel);
                     } else {
-                        customImageUrl = url;
-                        localStorage.setItem(`custom_url_${userId}_${currentLevel}`, url);
-                        await loadPhotoFromUrl(url);
+                        const ok = await loadPhotoFromUrl(url);
+                        if (ok) {
+                            customImageUrl = url;
+                            localStorage.setItem(`custom_url_${userId}_${currentLevel}`, url);
+                        } else {
+                            customImageUrl = "";
+                            localStorage.removeItem(`custom_url_${userId}_${currentLevel}`);
+                            generateDeterministicData(currentLevel);
+                            document.getElementById('level-title').textContent += ' - image failed to load (CORS or bad URL); URL not saved';
+                        }
                     }
                 } else {
                     generateDeterministicData(currentLevel);
@@ -784,7 +849,7 @@
                             answerGrid[y * GRID_SIZE + x] = closestIdx;
                         }
                     }
-                    resolve();
+                    resolve(!fallbackAttempted);
                 };
 
                 const handleError = () => {
@@ -794,7 +859,7 @@
                         img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
                     } else {
                         generateDeterministicData(currentLevel);
-                        resolve();
+                        resolve(false);
                     }
                 };
 
@@ -1088,7 +1153,7 @@
             if (!currentUser || !supabaseClient) return false;
             const payload = {
                 user_id: currentUser.id,
-                category: currentCategory,
+                category: dbCat(currentCategory),
                 level_index: currentLevel,
                 colored_indices: Array.from(coloredIndices)
             };
@@ -1096,6 +1161,10 @@
                 payload.custom_url = customImageUrl;
             }
             
+            const sig = packIdx(coloredIndices) + '|' + (payload.custom_url || '');
+            const sigKey = `${payload.user_id}_${payload.category}_${payload.level_index}`;
+            if (lastPersisted.get(sigKey) === sig) return true;
+
             const { error } = await supabaseClient
                 .from('user_progress')
                 .upsert(payload, { onConflict: 'user_id,category,level_index' });
@@ -1104,6 +1173,7 @@
                 console.error("Cloud persist failed:", error.message);
                 return false;
             }
+            lastPersisted.set(sigKey, sig);
             return true;
         }
 
@@ -1115,11 +1185,7 @@
                 if (userGrid[i] !== 0) coloredIndices.push(i);
             }
             const key = getStorageKey(currentCategory, currentLevel);
-            try {
-                localStorage.setItem(key, JSON.stringify(coloredIndices));
-            } catch(e) {
-                console.warn("Storage quota exceeded", e);
-            }
+            storeIdx(key, coloredIndices);
 
             if (currentUser && supabaseClient) {
                 clearTimeout(saveTimeout);
@@ -1141,16 +1207,16 @@
                 const { data, error } = await supabaseClient.from('user_progress')
                     .select('colored_indices, custom_url')
                     .eq('user_id', currentUser.id)
-                    .eq('category', currentCategory)
+                    .eq('category', dbCat(currentCategory))
                     .eq('level_index', currentLevel)
                     .maybeSingle();
 
                 if (!error && data) {
                     coloredIndices = data.colored_indices || [];
                     if (data.custom_url) customImageUrl = data.custom_url;
-                    try {
-                        localStorage.setItem(key, JSON.stringify(coloredIndices));
-                    } catch(e){}
+                    storeIdx(key, coloredIndices);
+                    lastPersisted.set(`${currentUser.id}_${dbCat(currentCategory)}_${currentLevel}`,
+                        packIdx(coloredIndices) + '|' + (currentCategory === 'custom' ? (customImageUrl || '') : ''));
                 }
             }
 
@@ -1158,16 +1224,16 @@
                 const userId = currentUser ? currentUser.id : 'guest';
                 const keyCandidates = [
                     key,
-                    `grid_save_${userId}_${currentCategory}_${currentLevel}`,
-                    `grid_save_guest_${currentCategory}_${currentLevel}_${GRID_SIZE}`,
-                    `grid_save_guest_${currentCategory}_${currentLevel}`
+                    `grid_save_${userId}_${dbCat(currentCategory)}_${currentLevel}`,
+                    `grid_save_guest_${dbCat(currentCategory)}_${currentLevel}_${GRID_SIZE}`,
+                    `grid_save_guest_${dbCat(currentCategory)}_${currentLevel}`
                 ];
 
                 for (const candidateKey of keyCandidates) {
                     const raw = localStorage.getItem(candidateKey);
                     if (raw) {
                         try {
-                            const parsed = JSON.parse(raw);
+                            const parsed = unpackIdx(raw);
                             if (parsed && parsed.length > 0) {
                                 coloredIndices = parsed;
                                 break;
@@ -1358,16 +1424,19 @@
 
             const progressMap = new Map();
             const userId = currentUser ? currentUser.id : 'guest';
-            const prefix = `grid_save_${userId}_${currentCategory}_`;
+            currentSubject = document.getElementById('subject-select').value;
+            const cat = dbCat(currentCategory);
+            const prefix = `grid_save_${userId}_${cat}_`;
 
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
-                if (key && (key.startsWith(prefix) || key.startsWith(`grid_save_guest_${currentCategory}_`))) {
+                if (key && (key.startsWith(prefix) || key.startsWith(`grid_save_guest_${cat}_`))) {
                     const parts = key.split('_');
-                    const levelIdx = parseInt(parts[3], 10);
+                    const levelIdx = parseInt(parts[4], 10);
+                    if (parts[5] !== undefined && parts[5] !== String(GRID_SIZE)) continue;
                     if (!isNaN(levelIdx)) {
                         try {
-                            const saved = JSON.parse(localStorage.getItem(key) || '[]');
+                            const saved = unpackIdx(localStorage.getItem(key));
                             if (saved.length > 0) {
                                 const cUrl = localStorage.getItem(`custom_url_${userId}_${levelIdx}`);
                                 progressMap.set(levelIdx, { count: saved.length, indices: saved, customUrl: cUrl });
@@ -1381,16 +1450,14 @@
                 const { data, error } = await supabaseClient.from('user_progress')
                     .select('level_index, colored_indices, custom_url')
                     .eq('user_id', currentUser.id)
-                    .eq('category', currentCategory);
+                    .eq('category', cat);
 
                 if (!error && data) {
                     for (const row of data) {
                         const indices = row.colored_indices || [];
                         if (indices.length > 0) {
                             progressMap.set(row.level_index, { count: indices.length, indices, customUrl: row.custom_url });
-                            try {
-                                localStorage.setItem(`${prefix}${row.level_index}_${GRID_SIZE}`, JSON.stringify(indices));
-                            } catch(e){}
+                            storeIdx(`${prefix}${row.level_index}_${GRID_SIZE}`, indices);
                         }
                     }
                 }
@@ -1404,7 +1471,11 @@
                 else inProgress.appendChild(card);
             });
 
-            for (let i = 0; i < 24; i++) {
+            if (currentCategory === 'photography') {
+                try { await getWikiPages(currentSubject); } catch (e) {}
+            }
+            const shown = Math.min(24, levelCount());
+            for (let i = 0; i < shown; i++) {
                 if (!progressMap.has(i)) {
                     if (activeTheme === 'all' || getLevelTheme(i) === activeTheme) {
                         inProgress.appendChild(createLevelCard(i, 0, [], null));
@@ -1431,7 +1502,8 @@
             hintMarker = null;
             customImageUrl = "";
             const next = currentLevel + dir;
-            if (next >= 0 && next < TOTAL_LEVELS) await initLevel(next);
+            if (next >= 0 && next < levelCount()) await initLevel(next);
+            else await initLevel(currentLevel);
         }
 
         async function logout() {
