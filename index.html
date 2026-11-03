@@ -19,7 +19,7 @@
 
         #home-screen { padding: 30px; padding-top: max(30px, env(safe-area-inset-top)); box-sizing: border-box; overflow-y: auto; height: 100vh; }
         .controls-row { display: flex; gap: 15px; align-items: center; margin-bottom: 20px; justify-content: space-between; flex-wrap: wrap; }
-        .tab-container { display: flex; gap: 10px; }
+        .tab-container { display: flex; gap: 10px; flex-wrap: wrap; }
         .tab-btn { background: #25252b; color: #888; border: none; padding: 10px 20px; font-weight: bold; cursor: pointer; border-radius: 4px; }
         .tab-btn.active { background: var(--accent); color: #fff; }
 
@@ -30,7 +30,11 @@
         .url-input-container input { flex: 1; background: #1a1a1a; border: 1px solid #333; color: #fff; padding: 10px; border-radius: 4px; }
 
         .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; margin-bottom: 30px; }
-        .level-card { background: var(--ui); border: 1px solid #2a2a2a; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; align-items: center; cursor: pointer; text-align: center; }
+        .level-card { position: relative; background: var(--ui); border: 1px solid #2a2a2a; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; align-items: center; cursor: pointer; text-align: center; }
+        .heart-btn { position: absolute; top: 16px; right: 16px; background: rgba(0,0,0,0.55); color: #ddd; border: none; border-radius: 50%; width: 32px; height: 32px; font-size: 18px; line-height: 32px; cursor: pointer; padding: 0; }
+        .heart-btn.on { color: #e74c3c; }
+        .btn-like { background: #333; color: #ddd; }
+        .btn-like.on { background: #e74c3c; color: #fff; }
         .gallery-preview { width: 100%; aspect-ratio: 1; background: #d8d8d8; border-radius: 4px; margin-bottom: 10px; image-rendering: pixelated; }
 
         #header { height: 50px; background: var(--ui); display: flex; align-items: center; padding: 0 15px; padding-top: env(safe-area-inset-top); justify-content: space-between; border-bottom: 1px solid #333; }
@@ -147,6 +151,11 @@
             <button class="btn" onclick="loadCustomUrlFromInput()">Load Photo</button>
         </div>
 
+        <div id="like-controls" class="url-input-container">
+            <button class="btn" onclick="findMoreLikeLiked()">Find more like liked</button>
+            <span id="like-status" style="font-size:12px; color:#888; align-self:center"></span>
+        </div>
+
         <h3>In Progress</h3>
         <div id="in-progress-gallery" class="gallery-grid"></div>
         <h3>Completed</h3>
@@ -160,6 +169,7 @@
                 <span id="level-title" style="margin-left:10px; font-weight:bold;">Mandala #1</span>
             </div>
             <div style="display:flex; gap:8px;">
+                <button class="btn btn-like" id="like-btn" onclick="toggleLikeCurrent()">Like</button>
                 <button class="btn btn-hint" onclick="triggerHint()">Hint</button>
                 <button class="btn btn-timelapse" onclick="playTimelapse()">Timelapse</button>
                 <button class="btn btn-settings" onclick="toggleSettingsModal(true)">Settings</button>
@@ -250,6 +260,7 @@
         let hintAnimFrame = null;
 
         let currentSubject = 'general';
+        let currentEntry = null;
         const wikiCache = new Map();
         const wikiCounts = new Map();
         const lastPersisted = new Map();
@@ -442,34 +453,40 @@
 
         function triggerHint() {
             if (!isLevelLoaded || isTimelapsePlaying) return;
-            let targetIdx = -1;
+            const dpr = window.devicePixelRatio || 1;
+            const viewW = canvas.width / dpr;
+            const viewH = canvas.height / dpr;
+            const cx = (viewW / 2 - viewTransform.x) / viewTransform.zoom;
+            const cy = (viewH / 2 - viewTransform.y) / viewTransform.zoom;
 
-            for (let i = 0; i < answerGrid.length; i++) {
-                if (userGrid[i] === 0 && answerGrid[i] === activeColorId) {
-                    targetIdx = i;
-                    break;
-                }
-            }
-
-            if (targetIdx === -1) {
+            const nearest = (match) => {
+                let best = -1, bestD = Infinity;
                 for (let i = 0; i < answerGrid.length; i++) {
-                    if (userGrid[i] === 0) {
-                        targetIdx = i;
-                        activeColorId = answerGrid[i];
-                        generatePaletteUI();
-                        break;
-                    }
+                    if (userGrid[i] !== 0 || answerGrid[i] === 0 || !match(answerGrid[i])) continue;
+                    const dx = (i % GRID_SIZE) + 0.5 - cx;
+                    const dy = Math.floor(i / GRID_SIZE) + 0.5 - cy;
+                    const d = dx * dx + dy * dy;
+                    if (d < bestD) { bestD = d; best = i; }
+                }
+                return best;
+            };
+
+            let targetIdx = nearest(c => c === activeColorId);
+            if (targetIdx === -1) {
+                targetIdx = nearest(() => true);
+                if (targetIdx !== -1) {
+                    activeColorId = answerGrid[targetIdx];
+                    generatePaletteUI();
                 }
             }
-
             if (targetIdx === -1) return;
 
             const gx = targetIdx % GRID_SIZE;
             const gy = Math.floor(targetIdx / GRID_SIZE);
 
-            viewTransform.zoom = 12;
-            viewTransform.x = (canvas.width / 2) - (gx + 0.5) * viewTransform.zoom;
-            viewTransform.y = (canvas.height / 2) - (gy + 0.5) * viewTransform.zoom;
+            viewTransform.zoom = Math.max(viewTransform.zoom, 12);
+            viewTransform.x = viewW / 2 - (gx + 0.5) * viewTransform.zoom;
+            viewTransform.y = viewH / 2 - (gy + 0.5) * viewTransform.zoom;
 
             hintMarker = {
                 x: gx + 0.5,
@@ -645,17 +662,41 @@
         function switchCategory(category) {
             currentCategory = category;
             renderCategoryTabs();
-            document.getElementById('custom-url-container').classList.toggle('active', category === 'custom');
             renderPortfolioGallery();
         }
 
+        function seasonOrder() {
+            const m = new Date().getMonth();
+            const cur = (m === 11 || m <= 1) ? 'winter' : m <= 4 ? 'spring' : m <= 7 ? 'summer' : 'autumn';
+            const all = ['spring', 'summer', 'autumn', 'winter'];
+            const k = all.indexOf(cur);
+            return { cur, order: all.slice(k).concat(all.slice(0, k)) };
+        }
+
+        function syncCategoryControls() {
+            document.getElementById('custom-url-container').classList.toggle('active', currentCategory === 'custom');
+            document.getElementById('like-controls').classList.toggle('active', currentCategory === 'liked' || currentCategory === 'foryou');
+            document.getElementById('subject-select').style.display = currentCategory === 'photography' ? '' : 'none';
+        }
+
         function renderCategoryTabs() {
-            const tabsContainer = document.getElementById('category-tabs');
-            tabsContainer.innerHTML = `
-                <button class="tab-btn ${currentCategory === 'mandala' ? 'active' : ''}" onclick="switchCategory('mandala')">Mandalas</button>
-                <button class="tab-btn ${currentCategory === 'photography' ? 'active' : ''}" onclick="switchCategory('photography')">Photography</button>
-                <button class="tab-btn ${currentCategory === 'custom' ? 'active' : ''}" onclick="switchCategory('custom')">Custom URL</button>
-            `;
+            const { cur, order } = seasonOrder();
+            const keys = ['mandala', 'photography', ...order, 'holidays', 'foryou', 'liked', 'custom'];
+            const labels = {
+                mandala: 'Mandalas', photography: 'Photography',
+                spring: 'Spring', summer: 'Summer', autumn: 'Autumn', winter: 'Winter',
+                holidays: 'Holidays', foryou: 'For You', liked: `Liked (${getLikes().length})`, custom: 'Custom URL'
+            };
+            const tabs = document.getElementById('category-tabs');
+            tabs.innerHTML = '';
+            keys.forEach(k => {
+                const b = document.createElement('button');
+                b.className = 'tab-btn' + (k === currentCategory ? ' active' : '');
+                b.textContent = labels[k] + (k === cur ? ' (now)' : '');
+                b.onclick = () => switchCategory(k);
+                tabs.appendChild(b);
+            });
+            syncCategoryControls();
         }
 
         function toggleInteractionMode() {
@@ -665,58 +706,260 @@
             btn.classList.toggle('active', isPanMode);
         }
 
-        function getWikiPages(subject) {
-            const cacheKey = `${subject}_${GRID_SIZE}`;
-            if (wikiCache.has(cacheKey)) return wikiCache.get(cacheKey);
-            const categoryMap = {
-                general: 'Category:Featured_pictures_on_Wikimedia_Commons',
-                landscape: 'Category:Featured_landscapes',
-                animals: 'Category:Featured_animals',
-                architecture: 'Category:Featured_architecture',
-                abstract: 'Category:Abstract_art'
-            };
-            const params = new URLSearchParams({
-                action: 'query',
-                generator: 'categorymembers',
-                gcmtitle: categoryMap[subject] || categoryMap.general,
-                gcmtype: 'file',
-                gcmlimit: '500',
-                prop: 'imageinfo',
-                iiprop: 'url|mime',
-                iiurlwidth: GRID_SIZE.toString(),
-                format: 'json',
-                origin: '*'
-            });
+        const SEASON_TERMS = {
+            spring: ['spring blossom', 'tulips', 'cherry blossom', 'daffodil', 'spring meadow'],
+            summer: ['summer beach', 'sunflower', 'summer sunset', 'lake summer', 'ocean waves'],
+            autumn: ['autumn leaves', 'autumn forest', 'pumpkin', 'fall foliage', 'harvest'],
+            winter: ['winter snow', 'frost', 'snowy landscape', 'icicle', 'winter forest'],
+            holidays: ['christmas', 'halloween', 'easter', 'fireworks', 'thanksgiving']
+        };
+        const SUBJECT_CATEGORIES = {
+            general: 'Category:Featured_pictures_on_Wikimedia_Commons',
+            landscape: 'Category:Featured_landscapes',
+            animals: 'Category:Featured_animals',
+            architecture: 'Category:Featured_architecture',
+            abstract: 'Category:Abstract_art'
+        };
+        const OK_MIME = /^image\/(jpeg|png|webp)$/;
+        const GENERIC_CAT = /featured|quality|valued|pictures|media|uploaded|licen|cc-|cc by|self-published|files|photograph|images|^pd|public domain|wiki|commons|taken|\bby\b|\blocation|\buse\b|maintenance|needing|photos|panorama|retouched|jpeg|bitmap|high-resolution|\d{4}/i;
+
+        let foryouList = [];
+        function loadForYou() {
+            try {
+                const v = JSON.parse(localStorage.getItem('studio_foryou') || '[]');
+                foryouList = Array.isArray(v) ? v : [];
+            } catch (e) { foryouList = []; }
+        }
+        function saveForYou() {
+            try { localStorage.setItem('studio_foryou', JSON.stringify(foryouList)); } catch (e) {}
+        }
+
+        function isSeasonCat(c) { return Object.prototype.hasOwnProperty.call(SEASON_TERMS, c); }
+        function isPoolCat(c) { return c === 'photography' || c === 'foryou' || isSeasonCat(c); }
+        function poolKey(category, subject = currentSubject) {
+            return `${category === 'photography' ? subject : category}_${GRID_SIZE}`;
+        }
+        function hashStr(str) {
+            let h = 2166136261;
+            for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+            return h >>> 0;
+        }
+        function shuffle(arr) {
+            const a = arr.slice();
+            for (let i = a.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [a[i], a[j]] = [a[j], a[i]];
+            }
+            return a;
+        }
+
+        async function wikiApi(params) {
+            const qs = new URLSearchParams({ action: 'query', format: 'json', origin: '*', ...params });
+            const response = await fetch(`https://commons.wikimedia.org/w/api.php?${qs.toString()}`);
+            if (!response.ok) throw new Error(`Wikimedia API error: ${response.status}`);
+            return response.json();
+        }
+        function imageParams(width = GRID_SIZE) {
+            return { prop: 'imageinfo', iiprop: 'url|mime', iiurlwidth: String(width) };
+        }
+        function pagesToEntries(data) {
+            if (!data || !data.query || !data.query.pages) return [];
+            return Object.values(data.query.pages)
+                .filter(pg => pg.imageinfo && pg.imageinfo[0] && OK_MIME.test(pg.imageinfo[0].mime || ''))
+                .map(pg => ({ title: pg.title || '', url: pg.imageinfo[0].thumburl || pg.imageinfo[0].url }));
+        }
+        async function searchEntries(search, limit) {
+            const data = await wikiApi({ generator: 'search', gsrnamespace: '6', gsrlimit: String(limit), gsrsearch: search, ...imageParams() });
+            return pagesToEntries(data);
+        }
+        async function categoryEntries(cat, limit) {
+            const data = await wikiApi({ generator: 'categorymembers', gcmtitle: 'Category:' + cat, gcmtype: 'file', gcmlimit: String(limit), ...imageParams(300) });
+            return pagesToEntries(data);
+        }
+        async function fileCategories(title) {
+            const data = await wikiApi({ titles: title, prop: 'categories', cllimit: 'max', clshow: '!hidden' });
+            const pg = Object.values((data.query && data.query.pages) || {})[0];
+            return ((pg && pg.categories) || []).map(c => c.title.replace(/^Category:/, ''));
+        }
+
+        function getPoolEntries(category, subject = currentSubject) {
+            if (category === 'foryou') return Promise.resolve(foryouList);
+            const key = poolKey(category, subject);
+            if (wikiCache.has(key)) return wikiCache.get(key);
             const promise = (async () => {
-                const response = await fetch(`https://commons.wikimedia.org/w/api.php?${params.toString()}`);
-                if (!response.ok) throw new Error(`Wikimedia API error: ${response.status}`);
-                const data = await response.json();
-                if (!data.query || !data.query.pages) throw new Error('No Wikimedia media found');
-                const okMime = /^image\/(jpeg|png|webp)$/;
-                const urls = Object.values(data.query.pages)
-                    .filter(pg => pg.imageinfo && pg.imageinfo[0] && okMime.test(pg.imageinfo[0].mime || ''))
-                    .sort((a, b) => (a.title || '').localeCompare(b.title || ''))
-                    .map(pg => pg.imageinfo[0].thumburl || pg.imageinfo[0].url);
-                if (!urls.length) throw new Error('No usable Wikimedia images');
-                wikiCounts.set(cacheKey, urls.length);
-                return urls;
+                let entries;
+                if (category === 'photography') {
+                    const data = await wikiApi({
+                        generator: 'categorymembers',
+                        gcmtitle: SUBJECT_CATEGORIES[subject] || SUBJECT_CATEGORIES.general,
+                        gcmtype: 'file',
+                        gcmlimit: '500',
+                        ...imageParams()
+                    });
+                    entries = pagesToEntries(data).sort((a, b) => a.title.localeCompare(b.title));
+                } else {
+                    const bases = ['Featured pictures on Wikimedia Commons', 'Quality images'];
+                    const jobs = [];
+                    for (const term of SEASON_TERMS[category]) {
+                        for (const base of bases) {
+                            jobs.push(searchEntries(`incategory:"${base}" ${term} filetype:bitmap`, 20).catch(() => []));
+                        }
+                    }
+                    const seen = new Set();
+                    entries = (await Promise.all(jobs)).flat().filter(e => {
+                        if (!e.title || seen.has(e.title)) return false;
+                        seen.add(e.title);
+                        return true;
+                    }).sort((a, b) => hashStr(a.title) - hashStr(b.title));
+                }
+                if (!entries.length) throw new Error('No usable Wikimedia images');
+                wikiCounts.set(key, entries.length);
+                return entries;
             })();
-            wikiCache.set(cacheKey, promise);
-            promise.catch(() => wikiCache.delete(cacheKey));
+            wikiCache.set(key, promise);
+            promise.catch(() => wikiCache.delete(key));
             return promise;
         }
 
-        async function fetchWikimediaImageUrl(levelIndex) {
-            const urls = await getWikiPages(currentSubject);
-            return urls[levelIndex % urls.length];
+        async function getPoolEntry(category, level, subject = currentSubject) {
+            const list = await getPoolEntries(category, subject);
+            if (category === 'foryou') {
+                const e = list[level];
+                if (!e) throw new Error('No For You entry at this index');
+                return e;
+            }
+            return list[level % list.length];
         }
 
         // Number of distinct levels available for the active category.
         function levelCount() {
-            if (currentCategory === 'photography') {
-                return wikiCounts.get(`${currentSubject}_${GRID_SIZE}`) || TOTAL_LEVELS;
+            if (currentCategory === 'foryou') return foryouList.length;
+            if (currentCategory === 'photography' || isSeasonCat(currentCategory)) {
+                return wikiCounts.get(poolKey(currentCategory)) || TOTAL_LEVELS;
             }
             return TOTAL_LEVELS;
+        }
+
+        // ---------- Likes ----------
+        function getLikes() {
+            try {
+                const v = JSON.parse(localStorage.getItem('studio_likes') || '[]');
+                return Array.isArray(v) ? v : [];
+            } catch (e) { return []; }
+        }
+        function saveLikes(arr) {
+            try { localStorage.setItem('studio_likes', JSON.stringify(arr)); } catch (e) {}
+        }
+        function likeId(category, subject, level) {
+            return `${category === 'photography' ? 'photography-' + (subject || 'general') : category}:${level}`;
+        }
+        function isLiked(id) { return getLikes().some(l => l.id === id); }
+
+        async function toggleLikeFor(category, subject, level, entryHint = null) {
+            const id = likeId(category, subject, level);
+            const likes = getLikes();
+            const idx = likes.findIndex(l => l.id === id);
+            if (idx >= 0) {
+                likes.splice(idx, 1);
+                saveLikes(likes);
+                renderCategoryTabs();
+                return false;
+            }
+            let entry = entryHint;
+            if (!entry && isPoolCat(category)) {
+                try { entry = await getPoolEntry(category, level, subject); } catch (e) {}
+            }
+            if (!entry && category === 'custom') {
+                const uid = currentUser ? currentUser.id : 'guest';
+                const url = localStorage.getItem(`custom_url_${uid}_${level}`);
+                if (url) entry = { title: 'Custom image', url };
+            }
+            likes.push({
+                id, category, subject: subject || 'general', level,
+                title: (entry && entry.title) || '', url: (entry && entry.url) || '', ts: Date.now()
+            });
+            saveLikes(likes);
+            renderCategoryTabs();
+            return true;
+        }
+
+        function updateLikeBtn() {
+            const btn = document.getElementById('like-btn');
+            if (!btn) return;
+            const on = isLiked(likeId(currentCategory, currentSubject, currentLevel));
+            btn.classList.toggle('on', on);
+            btn.textContent = on ? 'Liked' : 'Like';
+        }
+
+        async function toggleLikeCurrent() {
+            if (!isLevelLoaded) return;
+            await toggleLikeFor(currentCategory, currentSubject, currentLevel, currentEntry);
+            updateLikeBtn();
+        }
+
+        async function openLiked(item) {
+            currentCategory = item.category;
+            currentSubject = item.subject || 'general';
+            if (item.category === 'photography') document.getElementById('subject-select').value = currentSubject;
+            renderCategoryTabs();
+            document.getElementById('home-screen').classList.remove('active');
+            document.getElementById('game-screen').classList.add('active');
+            await initLevel(item.level, item.category === 'custom' ? (item.url || null) : null);
+        }
+
+        async function findMoreLikeLiked() {
+            const status = document.getElementById('like-status');
+            const likes = getLikes();
+            const poolLikes = likes.filter(l => l.title && isPoolCat(l.category));
+            const mandalaLikes = likes.filter(l => l.category === 'mandala');
+            if (!poolLikes.length && !mandalaLikes.length) {
+                status.textContent = 'Like at least one picture first.';
+                return;
+            }
+            status.textContent = 'Searching...';
+
+            if (poolLikes.length) {
+                const counts = new Map();
+                for (const l of shuffle(poolLikes).slice(0, 8)) {
+                    const cats = await fileCategories(l.title).catch(() => []);
+                    for (const c of cats) {
+                        if (GENERIC_CAT.test(c)) continue;
+                        counts.set(c, (counts.get(c) || 0) + 1);
+                    }
+                }
+                const ranked = shuffle(Array.from(counts.entries())).sort((a, b) => b[1] - a[1]).slice(0, 5).map(e => e[0]);
+                const seen = new Set(foryouList.filter(Boolean).map(e => e.title));
+                likes.forEach(l => seen.add(l.title));
+                let added = 0;
+                const used = [];
+                for (const c of ranked) {
+                    if (added >= 40) break;
+                    let entries = [];
+                    try { entries = await categoryEntries(c, 30); } catch (e) {}
+                    const fresh = entries.filter(e => e.title && !seen.has(e.title)).slice(0, 15);
+                    fresh.forEach(e => { seen.add(e.title); foryouList.push({ title: e.title, url: e.url }); added++; });
+                    if (fresh.length) used.push(c);
+                }
+                saveForYou();
+                if (added > 0) {
+                    switchCategory('foryou');
+                    document.getElementById('like-status').textContent = `Added ${added} from: ${used.join(', ')}`;
+                } else {
+                    status.textContent = ranked.length ? 'No new matches found.' : 'Liked pictures have no specific categories to match.';
+                }
+                return;
+            }
+
+            const themeCounts = new Map();
+            mandalaLikes.forEach(l => {
+                const t = getLevelTheme(l.level);
+                themeCounts.set(t, (themeCounts.get(t) || 0) + 1);
+            });
+            const top = Array.from(themeCounts.entries()).sort((a, b) => b[1] - a[1])[0][0];
+            document.getElementById('theme-select').value = top;
+            activeTheme = top;
+            switchCategory('mandala');
+            document.getElementById('like-status').textContent = `Filtered mandalas by palette: ${top}`;
         }
 
         async function initLevel(levelIndex, overrideUrl = null) {
@@ -726,15 +969,16 @@
             moveHistory = [];
             currentLevel = levelIndex;
             currentSubject = document.getElementById('subject-select').value;
+            currentEntry = null;
             document.getElementById('level-title').textContent = `${currentCategory.toUpperCase()} #${currentLevel + 1} (${GRID_SIZE}x${GRID_SIZE})`;
             
             answerGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
             userGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
 
             try {
-                if (currentCategory === 'photography') {
-                    const wikiUrl = await fetchWikimediaImageUrl(currentLevel);
-                    if (!(await loadPhotoFromUrl(wikiUrl))) generateDeterministicData(currentLevel);
+                if (isPoolCat(currentCategory)) {
+                    currentEntry = await getPoolEntry(currentCategory, currentLevel);
+                    if (!(await loadPhotoFromUrl(currentEntry.url))) generateDeterministicData(currentLevel);
                 } else if (currentCategory === 'custom') {
                     const userId = currentUser ? currentUser.id : 'guest';
                     let url = overrideUrl;
@@ -759,6 +1003,7 @@
                         const ok = await loadPhotoFromUrl(url);
                         if (ok) {
                             customImageUrl = url;
+                            currentEntry = { title: 'Custom image', url };
                             localStorage.setItem(`custom_url_${userId}_${currentLevel}`, url);
                         } else {
                             customImageUrl = "";
@@ -782,6 +1027,7 @@
             generatePaletteUI();
             startDashboardTimer();
             applySettingsUI();
+            updateLikeBtn();
         }
 
         function loadPhotoFromUrl(url) {
@@ -1159,6 +1405,8 @@
             };
             if (currentCategory === 'custom' && customImageUrl) {
                 payload.custom_url = customImageUrl;
+            } else if (currentCategory === 'foryou' && currentEntry && currentEntry.url) {
+                payload.custom_url = currentEntry.url;
             }
             
             const sig = packIdx(coloredIndices) + '|' + (payload.custom_url || '');
@@ -1213,10 +1461,10 @@
 
                 if (!error && data) {
                     coloredIndices = data.colored_indices || [];
-                    if (data.custom_url) customImageUrl = data.custom_url;
+                    if (data.custom_url && currentCategory === 'custom') customImageUrl = data.custom_url;
                     storeIdx(key, coloredIndices);
                     lastPersisted.set(`${currentUser.id}_${dbCat(currentCategory)}_${currentLevel}`,
-                        packIdx(coloredIndices) + '|' + (currentCategory === 'custom' ? (customImageUrl || '') : ''));
+                        packIdx(coloredIndices) + '|' + (data.custom_url || ''));
                 }
             }
 
@@ -1353,9 +1601,9 @@
                 });
             } else {
                 let imgUrl = customUrl;
-                if (category === 'photography') {
+                if (!imgUrl && isPoolCat(category)) {
                     try {
-                        imgUrl = await fetchWikimediaImageUrl(levelIdx);
+                        imgUrl = (await getPoolEntry(category, levelIdx)).url;
                     } catch(e) {
                         imgUrl = null;
                     }
@@ -1397,23 +1645,66 @@
             }
         }
 
-        function createLevelCard(levelIdx, progressCount, coloredIndices = [], customUrl = null) {
+        function createLevelCard(levelIdx, progressCount, coloredIndices = [], customUrl = null, opts = {}) {
+            const cat = opts.category || currentCategory;
+            const subj = opts.subject || currentSubject;
             const card = document.createElement('div');
             card.className = 'level-card';
+            const label = opts.label || `${cat === 'foryou' ? 'FOR YOU' : cat.toUpperCase()} #${levelIdx + 1}`;
+            const sub = opts.sub !== undefined ? opts.sub : `${progressCount} / ${GRID_SIZE * GRID_SIZE} px`;
             card.innerHTML = `
                 <canvas class="gallery-preview" width="${GRID_SIZE}" height="${GRID_SIZE}"></canvas>
-                <div>${currentCategory.toUpperCase()} #${levelIdx + 1}</div>
-                <div style="font-size:11px; color:#888">${progressCount} / ${GRID_SIZE * GRID_SIZE} px</div>
+                <div></div>
+                <div style="font-size:11px; color:#888"></div>
             `;
-            const previewCanvas = card.querySelector('.gallery-preview');
-            drawPreviewProgress(previewCanvas, levelIdx, currentCategory, coloredIndices, customUrl);
+            card.children[1].textContent = label;
+            card.children[2].textContent = sub;
 
-            card.onclick = async () => {
+            const heart = document.createElement('button');
+            const syncHeart = (on) => { heart.className = 'heart-btn' + (on ? ' on' : ''); heart.textContent = on ? '\u2665' : '\u2661'; };
+            syncHeart(isLiked(likeId(cat, subj, levelIdx)));
+            heart.title = 'Like';
+            heart.onclick = async (e) => {
+                e.stopPropagation();
+                const on = await toggleLikeFor(cat, subj, levelIdx, opts.entry || null);
+                syncHeart(on);
+                if (currentCategory === 'liked' && !on) renderPortfolioGallery();
+            };
+            card.appendChild(heart);
+
+            const previewCanvas = card.querySelector('.gallery-preview');
+            drawPreviewProgress(previewCanvas, levelIdx, cat, coloredIndices, customUrl);
+
+            card.onclick = opts.onOpen || (async () => {
                 document.getElementById('home-screen').classList.remove('active');
                 document.getElementById('game-screen').classList.add('active');
                 await initLevel(levelIdx);
-            };
+            });
             return card;
+        }
+
+        function renderLikedGallery() {
+            const grid = document.getElementById('in-progress-gallery');
+            const likes = getLikes();
+            if (!likes.length) {
+                const msg = document.createElement('div');
+                msg.style.color = '#888';
+                msg.textContent = 'No liked pictures yet. Use the heart on a card, or Like inside a level.';
+                grid.appendChild(msg);
+                return;
+            }
+            const all = Array.from({ length: GRID_SIZE * GRID_SIZE }, (_, i) => i);
+            likes.slice().reverse().forEach(item => {
+                const name = (item.title || '').replace(/^File:/, '').replace(/\.[a-z0-9]+$/i, '');
+                grid.appendChild(createLevelCard(item.level, 0, all, item.url || null, {
+                    category: item.category,
+                    subject: item.subject,
+                    label: name || `${item.category.toUpperCase()} #${item.level + 1}`,
+                    sub: item.category === 'photography' ? `photography / ${item.subject}` : item.category,
+                    entry: { title: item.title, url: item.url },
+                    onOpen: () => openLiked(item)
+                }));
+            });
         }
 
         async function renderPortfolioGallery() {
@@ -1421,6 +1712,11 @@
             const completed = document.getElementById('completed-gallery');
             inProgress.innerHTML = ''; 
             completed.innerHTML = '';
+            syncCategoryControls();
+            if (currentCategory === 'liked') {
+                renderLikedGallery();
+                return;
+            }
 
             const progressMap = new Map();
             const userId = currentUser ? currentUser.id : 'guest';
@@ -1454,6 +1750,10 @@
 
                 if (!error && data) {
                     for (const row of data) {
+                        if (currentCategory === 'foryou' && row.custom_url && !foryouList[row.level_index]) {
+                            foryouList[row.level_index] = { title: '', url: row.custom_url };
+                            saveForYou();
+                        }
                         const indices = row.colored_indices || [];
                         if (indices.length > 0) {
                             progressMap.set(row.level_index, { count: indices.length, indices, customUrl: row.custom_url });
@@ -1471,8 +1771,15 @@
                 else inProgress.appendChild(card);
             });
 
-            if (currentCategory === 'photography') {
-                try { await getWikiPages(currentSubject); } catch (e) {}
+            if (isPoolCat(currentCategory)) {
+                try { await getPoolEntries(currentCategory); } catch (e) {}
+            }
+            if (currentCategory === 'foryou' && !foryouList.some(Boolean) && progressMap.size === 0) {
+                const msg = document.createElement('div');
+                msg.style.color = '#888';
+                msg.textContent = 'Nothing here yet. Like pictures, then press "Find more like liked".';
+                inProgress.appendChild(msg);
+                return;
             }
             const shown = Math.min(24, levelCount());
             for (let i = 0; i < shown; i++) {
@@ -1529,6 +1836,7 @@
 
         window.addEventListener('load', async () => {
             loadSettings();
+            loadForYou();
             renderCategoryTabs();
             if (supabaseClient) {
                 await initAuthSession();
