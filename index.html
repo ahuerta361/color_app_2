@@ -38,6 +38,9 @@
         .gallery-preview { width: 100%; aspect-ratio: 1; background: #d8d8d8; border-radius: 4px; margin-bottom: 10px; image-rendering: pixelated; }
 
         #header { height: 50px; background: var(--ui); display: flex; align-items: center; padding: 0 15px; padding-top: env(safe-area-inset-top); justify-content: space-between; border-bottom: 1px solid #333; }
+        #header { overflow-x: auto; gap: 6px; }
+        #header .btn { padding: 8px 9px; }
+        #header > div { display: flex; align-items: center; gap: 4px; flex-shrink: 0; white-space: nowrap; }
         .btn { background: var(--accent); color: #fff; border: none; padding: 8px 14px; font-weight: bold; cursor: pointer; border-radius: 4px; }
         .btn-hint { background: #f1c40f; color: #121212; }
         .btn-timelapse { background: #8e44ad; color: #fff; }
@@ -263,6 +266,7 @@
         let currentEntry = null;
         let extraIndices = [];
         let timelapseBackup = null;
+        let levelLoadId = 0;
         let needsHeal = false;
         function unionIdx(a, b) { return Array.from(new Set([...(a || []), ...(b || [])])); }
         const wikiCache = new Map();
@@ -467,25 +471,20 @@
             const cx = (viewW / 2 - viewTransform.x) / viewTransform.zoom;
             const cy = (viewH / 2 - viewTransform.y) / viewTransform.zoom;
 
-            const nearest = (match) => {
-                let best = -1, bestD = Infinity;
-                for (let i = 0; i < answerGrid.length; i++) {
-                    if (userGrid[i] !== 0 || answerGrid[i] === 0 || !match(answerGrid[i])) continue;
-                    const dx = (i % GRID_SIZE) + 0.5 - cx;
-                    const dy = Math.floor(i / GRID_SIZE) + 0.5 - cy;
-                    const d = dx * dx + dy * dy;
-                    if (d < bestD) { bestD = d; best = i; }
-                }
-                return best;
-            };
-
-            let targetIdx = nearest(c => c === activeColorId);
-            if (targetIdx === -1) {
-                targetIdx = nearest(() => true);
-                if (targetIdx !== -1) {
-                    activeColorId = answerGrid[targetIdx];
-                    generatePaletteUI();
-                }
+            // One pass: nearest unfilled pixel of the active color, and nearest of any color as fallback.
+            let targetIdx = -1, bestActive = Infinity, anyIdx = -1, bestAny = Infinity;
+            for (let i = 0; i < answerGrid.length; i++) {
+                if (userGrid[i] !== 0 || answerGrid[i] === 0) continue;
+                const dx = (i % GRID_SIZE) + 0.5 - cx;
+                const dy = Math.floor(i / GRID_SIZE) + 0.5 - cy;
+                const d = dx * dx + dy * dy;
+                if (d < bestAny) { bestAny = d; anyIdx = i; }
+                if (answerGrid[i] === activeColorId && d < bestActive) { bestActive = d; targetIdx = i; }
+            }
+            if (targetIdx === -1 && anyIdx !== -1) {
+                targetIdx = anyIdx;
+                activeColorId = answerGrid[targetIdx];
+                generatePaletteUI();
             }
             if (targetIdx === -1) return;
 
@@ -978,6 +977,7 @@
 
         async function initLevel(levelIndex, overrideUrl = null) {
             stopTimelapse();
+            levelLoadId++;
             isLevelLoaded = false;
             levelAlreadyCompleted = false;
             hintMarker = null;
@@ -1176,24 +1176,31 @@
             userGrid.fill(0);
         }
 
+        const miniCache = document.createElement('canvas');
+        miniCache.width = 140; miniCache.height = 140;
+        const miniCacheCtx = miniCache.getContext('2d');
+        let miniCacheKey = '';
+
         function drawMinimap() {
             if (!settings.showMinimap || !document.getElementById('game-screen').classList.contains('active')) return;
-            
-            mCtx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
-            const ratio = 140 / GRID_SIZE;
 
-            for (let y = 0; y < GRID_SIZE; y++) {
-                for (let x = 0; x < GRID_SIZE; x++) {
-                    const idx = y * GRID_SIZE + x;
-                    const uColor = userGrid[idx];
-                    if (uColor !== 0) {
-                        mCtx.fillStyle = colorPalette[uColor];
-                    } else {
-                        mCtx.fillStyle = '#222222';
+            const ratio = 140 / GRID_SIZE;
+            let count = 0;
+            for (let i = 0; i < userGrid.length; i++) if (userGrid[i] !== 0) count++;
+            const cacheKey = `${levelLoadId}|${GRID_SIZE}|${colorPalette.length}|${count}`;
+            if (cacheKey !== miniCacheKey) {
+                miniCacheKey = cacheKey;
+                miniCacheCtx.clearRect(0, 0, 140, 140);
+                for (let y = 0; y < GRID_SIZE; y++) {
+                    for (let x = 0; x < GRID_SIZE; x++) {
+                        const uColor = userGrid[y * GRID_SIZE + x];
+                        miniCacheCtx.fillStyle = uColor !== 0 ? colorPalette[uColor] : '#222222';
+                        miniCacheCtx.fillRect(x * ratio, y * ratio, Math.max(1, ratio), Math.max(1, ratio));
                     }
-                    mCtx.fillRect(x * ratio, y * ratio, Math.max(1, ratio), Math.max(1, ratio));
                 }
             }
+            mCtx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
+            mCtx.drawImage(miniCache, 0, 0);
 
             const vX = -viewTransform.x / viewTransform.zoom;
             const vY = -viewTransform.y / viewTransform.zoom;
@@ -1205,6 +1212,38 @@
             mCtx.strokeRect(vX * ratio, vY * ratio, vW * ratio, vH * ratio);
         }
 
+        const gridImg = document.createElement('canvas');
+        const gridImgCtx = gridImg.getContext('2d');
+        let gridImgKey = '';
+
+        // Zoomed-out fast path: one cached bitmap of the whole grid instead of one fillRect per cell.
+        function drawLowZoom() {
+            let count = 0;
+            for (let i = 0; i < userGrid.length; i++) if (userGrid[i] !== 0) count++;
+            const key = `${levelLoadId}|${GRID_SIZE}|${colorPalette.length}|${count}`;
+            if (gridImg.width !== GRID_SIZE || gridImg.height !== GRID_SIZE) {
+                gridImg.width = GRID_SIZE;
+                gridImg.height = GRID_SIZE;
+                gridImgKey = '';
+            }
+            if (key !== gridImgKey) {
+                gridImgKey = key;
+                const img = gridImgCtx.createImageData(GRID_SIZE, GRID_SIZE);
+                const d = img.data;
+                for (let i = 0; i < userGrid.length; i++) {
+                    const u = userGrid[i];
+                    const rgb = (u !== 0 && rgbPaletteParsed[u]) ? rgbPaletteParsed[u] : null;
+                    d[i * 4] = rgb ? rgb[0] : 255;
+                    d[i * 4 + 1] = rgb ? rgb[1] : 255;
+                    d[i * 4 + 2] = rgb ? rgb[2] : 255;
+                    d[i * 4 + 3] = 255;
+                }
+                gridImgCtx.putImageData(img, 0, 0);
+            }
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(gridImg, 0, 0, GRID_SIZE, GRID_SIZE);
+        }
+
         function draw() {
             if (!canvas.width) return;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1213,31 +1252,42 @@
             ctx.scale(viewTransform.zoom, viewTransform.zoom);
 
             const z = viewTransform.zoom;
-            for (let y = 0; y < GRID_SIZE; y++) {
-                for (let x = 0; x < GRID_SIZE; x++) {
-                    const idx = y * GRID_SIZE + x;
-                    const uColor = userGrid[idx];
-                    const aColor = answerGrid[idx];
+            const viewW = canvas.width / (window.devicePixelRatio || 1);
+            const viewH = canvas.height / (window.devicePixelRatio || 1);
+            const x0 = Math.max(0, Math.floor(-viewTransform.x / z) - 1);
+            const x1 = Math.min(GRID_SIZE, Math.ceil((viewW - viewTransform.x) / z) + 1);
+            const y0 = Math.max(0, Math.floor(-viewTransform.y / z) - 1);
+            const y1 = Math.min(GRID_SIZE, Math.ceil((viewH - viewTransform.y) / z) + 1);
+            if (z <= 4) {
+                drawLowZoom();
+            } else {
+                for (let y = y0; y < y1; y++) {
+                    for (let x = x0; x < x1; x++) {
+                        const idx = y * GRID_SIZE + x;
+                        const uColor = userGrid[idx];
+                        const aColor = answerGrid[idx];
 
-                    if (uColor !== 0) {
-                        ctx.fillStyle = colorPalette[uColor];
-                        ctx.fillRect(x, y, 1.05, 1.05);
-                    } else if (z > 4) {
-                        ctx.fillStyle = (aColor === activeColorId) ? '#b0b0b0' : '#ffffff';
-                        ctx.fillRect(x, y, 1.05, 1.05);
-                        ctx.strokeStyle = '#ddd';
-                        ctx.lineWidth = 1 / z;
-                        ctx.strokeRect(x, y, 1, 1);
-                        ctx.fillStyle = '#666';
-                        ctx.font = '0.4px system-ui';
-                        ctx.textAlign = 'center';
-                        ctx.textBaseline = 'middle';
-                        ctx.fillText(aColor, x + 0.5, y + 0.5);
-                    } else {
-                        ctx.fillStyle = '#fff';
-                        ctx.fillRect(x, y, 1.05, 1.05);
+                        if (uColor !== 0) {
+                            ctx.fillStyle = colorPalette[uColor];
+                            ctx.fillRect(x, y, 1.05, 1.05);
+                        } else if (z > 4) {
+                            ctx.fillStyle = (aColor === activeColorId) ? '#b0b0b0' : '#ffffff';
+                            ctx.fillRect(x, y, 1.05, 1.05);
+                            ctx.strokeStyle = '#ddd';
+                            ctx.lineWidth = 1 / z;
+                            ctx.strokeRect(x, y, 1, 1);
+                            ctx.fillStyle = '#666';
+                            ctx.font = '0.4px system-ui';
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'middle';
+                            ctx.fillText(aColor, x + 0.5, y + 0.5);
+                        } else {
+                            ctx.fillStyle = '#fff';
+                            ctx.fillRect(x, y, 1.05, 1.05);
+                        }
                     }
                 }
+
             }
 
             if (hintMarker) {
@@ -1473,6 +1523,7 @@
             needsHeal = false;
             const key = getStorageKey(currentCategory, currentLevel);
             let cloudIndices = null;
+            let cloudOk = false;
             let localIndices = [];
 
             if (currentUser && supabaseClient) {
@@ -1483,6 +1534,7 @@
                     .eq('level_index', currentLevel)
                     .maybeSingle();
 
+                cloudOk = !error;
                 if (!error && data) {
                     cloudIndices = data.colored_indices || [];
                     if (data.custom_url && currentCategory === 'custom') customImageUrl = data.custom_url;
@@ -1508,7 +1560,7 @@
 
             // Progress only ever grows on load: a stale cloud or local copy must not erase the other.
             const coloredIndices = unionIdx(cloudIndices, localIndices);
-            if (cloudIndices && coloredIndices.length > cloudIndices.length) needsHeal = true;
+            if (cloudOk && coloredIndices.length > (cloudIndices ? cloudIndices.length : 0)) needsHeal = true;
             if (coloredIndices.length > localIndices.length) storeIdx(key, coloredIndices);
 
             let filled = 0;
