@@ -270,6 +270,10 @@
         const lastPersisted = new Map();
 
         // Photography progress is namespaced per subject. 'general' keeps the legacy 'photography' key.
+        // Cloud rows have no grid-size column, so the size is part of the category (150 keeps the legacy name).
+        function cloudCat(category) {
+            return dbCat(category) + (GRID_SIZE !== 150 ? `@${GRID_SIZE}` : '');
+        }
         function dbCat(category) {
             return (category === 'photography' && currentSubject !== 'general')
                 ? `photography-${currentSubject}` : category;
@@ -574,7 +578,7 @@
                     filter: `user_id=eq.${currentUser.id}`
                 }, (payload) => {
                     const newRow = payload.new;
-                    if (newRow && newRow.category === currentCategory && newRow.level_index === currentLevel && isLevelLoaded && !isTimelapsePlaying) {
+                    if (newRow && newRow.category === cloudCat(currentCategory) && newRow.level_index === currentLevel && isLevelLoaded && !isTimelapsePlaying) {
                         const indices = newRow.colored_indices || [];
                         for (let idx of indices) {
                             if (idx < userGrid.length) {
@@ -998,7 +1002,7 @@
                         const { data } = await supabaseClient.from('user_progress')
                             .select('custom_url')
                             .eq('user_id', currentUser.id)
-                            .eq('category', 'custom')
+                            .eq('category', cloudCat('custom'))
                             .eq('level_index', currentLevel)
                             .maybeSingle();
                         if (data && data.custom_url) url = data.custom_url;
@@ -1414,7 +1418,7 @@
             if (!currentUser || !supabaseClient) return false;
             const payload = {
                 user_id: currentUser.id,
-                category: dbCat(currentCategory),
+                category: cloudCat(currentCategory),
                 level_index: currentLevel,
                 colored_indices: Array.from(coloredIndices)
             };
@@ -1475,14 +1479,14 @@
                 const { data, error } = await supabaseClient.from('user_progress')
                     .select('colored_indices, custom_url')
                     .eq('user_id', currentUser.id)
-                    .eq('category', dbCat(currentCategory))
+                    .eq('category', cloudCat(currentCategory))
                     .eq('level_index', currentLevel)
                     .maybeSingle();
 
                 if (!error && data) {
                     cloudIndices = data.colored_indices || [];
                     if (data.custom_url && currentCategory === 'custom') customImageUrl = data.custom_url;
-                    lastPersisted.set(`${currentUser.id}_${dbCat(currentCategory)}_${currentLevel}`,
+                    lastPersisted.set(`${currentUser.id}_${cloudCat(currentCategory)}_${currentLevel}`,
                         packIdx(cloudIndices) + '|' + (data.custom_url || ''));
                 }
             }
@@ -1766,7 +1770,7 @@
                 const { data, error } = await supabaseClient.from('user_progress')
                     .select('level_index, colored_indices, custom_url')
                     .eq('user_id', currentUser.id)
-                    .eq('category', cat);
+                    .eq('category', cloudCat(currentCategory));
 
                 if (!error && data) {
                     for (const row of data) {
