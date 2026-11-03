@@ -1,0 +1,1469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Color By Number Studio</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎨</text></svg>">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        :root { --bg: #121212; --ui: #1e1e1e; --accent: #00adb5; --text: #eeeeee; }
+        body { margin: 0; padding: 0; background: var(--bg); font-family: system-ui, sans-serif; color: var(--text); height: 100vh; overflow: hidden; user-select: none; }
+        .screen { display: none; height: 100vh; width: 100vw; flex-direction: column; }
+        .screen.active { display: flex; }
+
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.85); z-index: 300; justify-content: center; align-items: center; }
+        .modal-overlay.active { display: flex; }
+        .auth-card { background: var(--ui); padding: 25px; border-radius: 8px; width: 320px; display: flex; flex-direction: column; gap: 15px; border: 1px solid #333; }
+        .auth-card input { background: #121212; border: 1px solid #444; color: #fff; padding: 10px; border-radius: 4px; }
+
+        #home-screen { padding: 30px; padding-top: max(30px, env(safe-area-inset-top)); box-sizing: border-box; overflow-y: auto; height: 100vh; }
+        .controls-row { display: flex; gap: 15px; align-items: center; margin-bottom: 20px; justify-content: space-between; flex-wrap: wrap; }
+        .tab-container { display: flex; gap: 10px; }
+        .tab-btn { background: #25252b; color: #888; border: none; padding: 10px 20px; font-weight: bold; cursor: pointer; border-radius: 4px; }
+        .tab-btn.active { background: var(--accent); color: #fff; }
+
+        .select-btn { background: #222; color: var(--text); border: 1px solid #444; padding: 10px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+
+        .url-input-container { display: none; gap: 10px; margin-bottom: 20px; }
+        .url-input-container.active { display: flex; }
+        .url-input-container input { flex: 1; background: #1a1a1a; border: 1px solid #333; color: #fff; padding: 10px; border-radius: 4px; }
+
+        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .level-card { background: var(--ui); border: 1px solid #2a2a2a; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; align-items: center; cursor: pointer; text-align: center; }
+        .gallery-preview { width: 100%; aspect-ratio: 1; background: #d8d8d8; border-radius: 4px; margin-bottom: 10px; image-rendering: pixelated; }
+
+        #header { height: 50px; background: var(--ui); display: flex; align-items: center; padding: 0 15px; padding-top: env(safe-area-inset-top); justify-content: space-between; border-bottom: 1px solid #333; }
+        .btn { background: var(--accent); color: #fff; border: none; padding: 8px 14px; font-weight: bold; cursor: pointer; border-radius: 4px; }
+        .btn-hint { background: #f1c40f; color: #121212; }
+        .btn-timelapse { background: #8e44ad; color: #fff; }
+        .btn-settings { background: #444; color: #fff; }
+        .btn-mode { background: #333; border: 1px solid #555; }
+        .btn-mode.active { background: #e74c3c; border-color: #e74c3c; color: #fff; }
+
+        #dashboard-bar { background: #181818; border-bottom: 1px solid #2a2a2a; padding: 6px 15px; display: flex; gap: 20px; font-size: 12px; font-weight: bold; color: #bbb; align-items: center; }
+        #dashboard-bar span { color: #fff; }
+
+        #main-layout { flex: 1; position: relative; background: #151515; overflow: hidden; }
+        #gameCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; image-rendering: pixelated; touch-action: none; }
+        
+        #minimap-overlay { position: absolute; top: 15px; right: 15px; width: 140px; height: 140px; background: rgba(18, 18, 18, 0.85); border: 2px solid #444; border-radius: 6px; z-index: 50; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+        #minimapCanvas { width: 100%; height: 100%; display: block; cursor: pointer; touch-action: none; }
+
+        #palette-wrapper { position: relative; background: var(--ui); border-top: 1px solid #333; box-sizing: border-box; padding-bottom: env(safe-area-inset-bottom); }
+        #palette-wrapper.hidden #palette-bar { display: none; }
+        #palette-tab { position: absolute; top: -28px; right: 20px; background: var(--ui); border: 1px solid #333; border-bottom: none; border-radius: 6px 6px 0 0; padding: 5px 14px; font-size: 11px; font-weight: bold; color: var(--accent); cursor: pointer; z-index: 10; letter-spacing: 0.5px; }
+        #palette-bar { height: 146px; display: grid; grid-template-columns: repeat(auto-fill, minmax(45px, 1fr)); gap: 5px; padding: 8px; overflow-y: auto; box-sizing: border-box; }
+        .swatch { height: 40px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color: #000; border: 2px solid transparent; }
+        .swatch.selected { border-color: #fff; transform: scale(1.05); }
+
+        .setting-row { display: flex; justify-content: space-between; align-items: center; font-size: 14px; cursor: pointer; }
+        .setting-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div id="auth-overlay" class="modal-overlay active">
+        <div class="auth-card">
+            <h3 style="margin:0">Cloud Studio Login</h3>
+            <input type="email" id="auth-email" placeholder="Email">
+            <input type="password" id="auth-password" placeholder="Password">
+            <button class="btn" onclick="handleAuth('login')">Sign In</button>
+            <button class="btn" style="background:#333" onclick="handleAuth('signup')">Register</button>
+            <button class="btn" style="background:#222; font-size:12px" onclick="bypassAuth()">Play Offline (Local Only)</button>
+        </div>
+    </div>
+
+    <div id="settings-modal" class="modal-overlay">
+        <div class="auth-card" style="width: 340px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h3 style="margin:0">Studio Settings</h3>
+                <button class="btn" style="background:transparent; font-size:18px; padding:2px 8px; color:#aaa" onclick="toggleSettingsModal(false)">✕</button>
+            </div>
+            <hr style="border:0; border-top:1px solid #333; margin: 5px 0 10px 0;">
+            <div style="display:flex; flex-direction:column; gap:14px;">
+                <label class="setting-row">
+                    <span>Progress Percentage</span>
+                    <input type="checkbox" id="set-progress" onchange="updateSetting('showProgress', this.checked)">
+                </label>
+                <label class="setting-row">
+                    <span>Pixels Remaining</span>
+                    <input type="checkbox" id="set-remaining" onchange="updateSetting('showRemaining', this.checked)">
+                </label>
+                <label class="setting-row">
+                    <span>Time Elapsed</span>
+                    <input type="checkbox" id="set-time" onchange="updateSetting('showTime', this.checked)">
+                </label>
+                <label class="setting-row">
+                    <span>Hide/Show Palette Feature</span>
+                    <input type="checkbox" id="set-palette" onchange="updateSetting('showPalette', this.checked)">
+                </label>
+                <label class="setting-row">
+                    <span>Minimap Overlay</span>
+                    <input type="checkbox" id="set-minimap" onchange="updateSetting('showMinimap', this.checked)">
+                </label>
+                <label class="setting-row">
+                    <span>Auto Timelapse on Finish</span>
+                    <input type="checkbox" id="set-timelapse" onchange="updateSetting('autoTimelapse', this.checked)">
+                </label>
+            </div>
+            <button class="btn" style="margin-top:10px;" onclick="toggleSettingsModal(false)">Done</button>
+        </div>
+    </div>
+
+    <div id="home-screen" class="screen active">
+        <div class="controls-row">
+            <div class="tab-container" id="category-tabs"></div>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <select id="size-select" class="select-btn" onchange="updateGridDimensions(this.value)">
+                    <option value="150">Grid: 150x150</option>
+                    <option value="200">Grid: 200x200</option>
+                    <option value="250">Grid: 250x250</option>
+                    <option value="300">Grid: 300x300</option>
+                </select>
+                <select id="subject-select" class="select-btn" onchange="renderPortfolioGallery()">
+                    <option value="general">Subject: General</option>
+                    <option value="landscape">Subject: Landscape</option>
+                    <option value="animals">Subject: Animals</option>
+                    <option value="architecture">Subject: Architecture</option>
+                    <option value="abstract">Subject: Abstract</option>
+                </select>
+                <select id="theme-select" class="select-btn" onchange="changeTheme(this.value)">
+                    <option value="all">Palette: All</option>
+                    <option value="warm">Palette: Warm</option>
+                    <option value="cool">Palette: Cool</option>
+                    <option value="pastel">Palette: Pastel</option>
+                    <option value="neon">Palette: Neon</option>
+                    <option value="grayscale">Palette: Grayscale</option>
+                </select>
+                <span id="user-status" style="font-size:12px; color:#888">Offline Mode</span>
+                <button class="btn btn-settings" onclick="toggleSettingsModal(true)">Settings</button>
+                <button class="btn" id="auth-main-btn" style="background:#444" onclick="handleAuthBtnClick()">Sign In</button>
+            </div>
+        </div>
+
+        <div id="custom-url-container" class="url-input-container">
+            <input type="text" id="custom-image-url" placeholder="Paste image URL for current level...">
+            <button class="btn" onclick="loadCustomUrlFromInput()">Load Photo</button>
+        </div>
+
+        <h3>In Progress</h3>
+        <div id="in-progress-gallery" class="gallery-grid"></div>
+        <h3>Completed</h3>
+        <div id="completed-gallery" class="gallery-grid"></div>
+    </div>
+
+    <div id="game-screen" class="screen">
+        <div id="header">
+            <div>
+                <button class="btn" onclick="returnToGallery()">← Gallery</button>
+                <span id="level-title" style="margin-left:10px; font-weight:bold;">Mandala #1</span>
+            </div>
+            <div style="display:flex; gap:8px;">
+                <button class="btn btn-hint" onclick="triggerHint()">Hint</button>
+                <button class="btn btn-timelapse" onclick="playTimelapse()">Timelapse</button>
+                <button class="btn btn-settings" onclick="toggleSettingsModal(true)">Settings</button>
+                <button class="btn" onclick="toggleFullscreen()">Full Screen</button>
+                <button class="btn btn-mode" id="mode-toggle" onclick="toggleInteractionMode()">Mode: PAINT</button>
+                <button class="btn" onclick="moveLevel(-1)">Prev</button>
+                <button class="btn" onclick="moveLevel(1)">Next</button>
+            </div>
+        </div>
+        <div id="dashboard-bar">
+            <div id="dash-pct-container">Progress: <span id="dash-pct">0.0%</span></div>
+            <div id="dash-left-container">Remaining: <span id="dash-left">0</span> px</div>
+            <div id="dash-time-container">Time Elapsed: <span id="dash-time">00:00</span></div>
+        </div>
+        <div id="main-layout">
+            <canvas id="gameCanvas"></canvas>
+            <div id="minimap-overlay">
+                <canvas id="minimapCanvas" width="140" height="140"></canvas>
+            </div>
+        </div>
+        <div id="palette-wrapper">
+            <div id="palette-tab" onclick="togglePalette()">HIDE PALETTE</div>
+            <div id="palette-bar"></div>
+        </div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = "https://ecwdxhcxyuutyxzjjhbi.supabase.co";
+        const SUPABASE_ANON_KEY = "sb_publishable_DOqW6Lf_dk5E19SUwIRkiA_fjAkD0Gf";
+        
+        const supabaseClient = (SUPABASE_URL && !SUPABASE_URL.includes("YOUR_SUPABASE")) 
+            ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+                auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
+            }) 
+            : null;
+
+        let GRID_SIZE = 150;
+        const TOTAL_LEVELS = 10000;
+        const TARGET_COLORS_COUNT = 160;
+
+        let settings = {
+            showProgress: true,
+            showRemaining: true,
+            showTime: true,
+            showPalette: true,
+            showMinimap: true,
+            autoTimelapse: true
+        };
+
+        let activeTheme = 'all';
+        let currentUser = null;
+        let currentCategory = 'mandala';
+        let currentLevel = 0;
+        let activeColorId = 1;
+        let customImageUrl = "";
+        let isLevelLoaded = false;
+        let realtimeChannel = null;
+
+        let isPanMode = false;
+        let colorPalette = [];
+        let rgbPaletteParsed = [];
+        let answerGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
+        let userGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
+
+        let moveHistory = [];
+        let timerInterval = null;
+        let secondsElapsed = 0;
+        let isTimelapsePlaying = false;
+        let timelapseInterval = null;
+        let levelAlreadyCompleted = false;
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const minimapCanvas = document.getElementById('minimapCanvas');
+        const mCtx = minimapCanvas.getContext('2d');
+
+        let viewTransform = { x: 0, y: 0, zoom: 1 };
+        
+        let activePointers = new Map();
+        let initialPinchDist = null;
+        let initialZoom = 1;
+        let isDragging = false;
+        let isPanning = false;
+        let lastPointerPos = { x: 0, y: 0 };
+        let saveTimeout = null;
+
+        let hintMarker = null;
+        let hintAnimFrame = null;
+
+        function loadSettings() {
+            const saved = localStorage.getItem('studio_settings');
+            if (saved) {
+                try { settings = { ...settings, ...JSON.parse(saved) }; } catch(e){}
+            }
+            applySettingsUI();
+        }
+
+        function saveSettings() {
+            localStorage.setItem('studio_settings', JSON.stringify(settings));
+            applySettingsUI();
+        }
+
+        function updateSetting(key, val) {
+            settings[key] = val;
+            saveSettings();
+        }
+
+        function applySettingsUI() {
+            document.getElementById('set-progress').checked = settings.showProgress;
+            document.getElementById('set-remaining').checked = settings.showRemaining;
+            document.getElementById('set-time').checked = settings.showTime;
+            document.getElementById('set-palette').checked = settings.showPalette;
+            document.getElementById('set-minimap').checked = settings.showMinimap;
+            document.getElementById('set-timelapse').checked = settings.autoTimelapse;
+
+            document.getElementById('dash-pct-container').style.display = settings.showProgress ? 'block' : 'none';
+            document.getElementById('dash-left-container').style.display = settings.showRemaining ? 'block' : 'none';
+            document.getElementById('dash-time-container').style.display = settings.showTime ? 'block' : 'none';
+
+            const dashBar = document.getElementById('dashboard-bar');
+            dashBar.style.display = (!settings.showProgress && !settings.showRemaining && !settings.showTime) ? 'none' : 'flex';
+
+            const paletteWrapper = document.getElementById('palette-wrapper');
+            const paletteTab = document.getElementById('palette-tab');
+            
+            paletteWrapper.style.display = 'block';
+            if (settings.showPalette) {
+                paletteTab.style.display = 'block';
+            } else {
+                paletteTab.style.display = 'none';
+                paletteWrapper.classList.remove('hidden');
+            }
+
+            const minimapOverlay = document.getElementById('minimap-overlay');
+            minimapOverlay.style.display = settings.showMinimap ? 'block' : 'none';
+
+            resizeCanvas();
+            draw();
+        }
+
+        function toggleSettingsModal(show) {
+            document.getElementById('settings-modal').classList.toggle('active', show);
+        }
+
+        async function updateGridDimensions(val) {
+            if (isLevelLoaded) {
+                await saveState(true);
+            }
+            GRID_SIZE = parseInt(val, 10);
+            answerGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
+            userGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
+            if (isLevelLoaded) {
+                await initLevel(currentLevel);
+            } else {
+                await renderPortfolioGallery();
+            }
+        }
+
+        function getStorageKey(category, levelIndex) {
+            const userId = currentUser ? currentUser.id : 'guest';
+            return `grid_save_${userId}_${category}_${levelIndex}_${GRID_SIZE}`;
+        }
+
+        function getLevelTheme(levelIdx) {
+            const themeKeys = ['warm', 'cool', 'pastel', 'neon', 'grayscale'];
+            return themeKeys[levelIdx % themeKeys.length];
+        }
+
+        function changeTheme(themeKey) {
+            activeTheme = themeKey;
+            renderPortfolioGallery();
+        }
+
+        function startDashboardTimer() {
+            clearInterval(timerInterval);
+            secondsElapsed = 0;
+            timerInterval = setInterval(() => {
+                secondsElapsed++;
+                updateDashboard();
+            }, 1000);
+            updateDashboard();
+        }
+
+        function updateDashboard() {
+            let filled = 0;
+            const total = GRID_SIZE * GRID_SIZE;
+            for (let i = 0; i < total; i++) {
+                if (userGrid[i] !== 0) filled++;
+            }
+            const pct = ((filled / total) * 100).toFixed(1);
+            const remaining = total - filled;
+            
+            const mins = Math.floor(secondsElapsed / 60).toString().padStart(2, '0');
+            const secs = (secondsElapsed % 60).toString().padStart(2, '0');
+
+            document.getElementById('dash-pct').textContent = `${pct}%`;
+            document.getElementById('dash-left').textContent = remaining;
+            document.getElementById('dash-time').textContent = `${mins}:${secs}`;
+        }
+
+        function checkLevelCompletion() {
+            if (levelAlreadyCompleted || isTimelapsePlaying) return;
+
+            let filled = 0;
+            const total = GRID_SIZE * GRID_SIZE;
+            for (let i = 0; i < total; i++) {
+                if (userGrid[i] !== 0) filled++;
+            }
+
+            if (filled === total) {
+                levelAlreadyCompleted = true;
+                clearInterval(timerInterval);
+                if (settings.autoTimelapse) {
+                    setTimeout(() => {
+                        playTimelapse();
+                    }, 300);
+                }
+            }
+        }
+
+        function togglePalette() {
+            if (!settings.showPalette) return;
+            const wrapper = document.getElementById('palette-wrapper');
+            const tab = document.getElementById('palette-tab');
+            const isHidden = wrapper.classList.toggle('hidden');
+            if (tab) tab.textContent = isHidden ? 'SHOW PALETTE' : 'HIDE PALETTE';
+            resizeCanvas();
+            draw();
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else if (document.exitFullscreen) {
+                document.exitFullscreen().catch(() => {});
+            }
+        }
+
+        function triggerHint() {
+            if (!isLevelLoaded || isTimelapsePlaying) return;
+            let targetIdx = -1;
+
+            for (let i = 0; i < answerGrid.length; i++) {
+                if (userGrid[i] === 0 && answerGrid[i] === activeColorId) {
+                    targetIdx = i;
+                    break;
+                }
+            }
+
+            if (targetIdx === -1) {
+                for (let i = 0; i < answerGrid.length; i++) {
+                    if (userGrid[i] === 0) {
+                        targetIdx = i;
+                        activeColorId = answerGrid[i];
+                        generatePaletteUI();
+                        break;
+                    }
+                }
+            }
+
+            if (targetIdx === -1) return;
+
+            const gx = targetIdx % GRID_SIZE;
+            const gy = Math.floor(targetIdx / GRID_SIZE);
+
+            viewTransform.zoom = 12;
+            viewTransform.x = (canvas.width / 2) - (gx + 0.5) * viewTransform.zoom;
+            viewTransform.y = (canvas.height / 2) - (gy + 0.5) * viewTransform.zoom;
+
+            hintMarker = {
+                x: gx + 0.5,
+                y: gy + 0.5,
+                startTime: performance.now(),
+                duration: 1800
+            };
+
+            if (hintAnimFrame) cancelAnimationFrame(hintAnimFrame);
+            animateHint();
+        }
+
+        function animateHint() {
+            if (!hintMarker) return;
+            const elapsed = performance.now() - hintMarker.startTime;
+            if (elapsed > hintMarker.duration) {
+                hintMarker = null;
+                draw();
+                return;
+            }
+            draw();
+            hintAnimFrame = requestAnimationFrame(animateHint);
+        }
+
+        function playTimelapse() {
+            if (isTimelapsePlaying) {
+                skipTimelapse();
+                return;
+            }
+            if (moveHistory.length === 0) return;
+
+            isTimelapsePlaying = true;
+            const tempGrid = new Uint8Array(userGrid);
+            userGrid.fill(0);
+
+            let step = 0;
+            const speed = Math.max(1, Math.floor(moveHistory.length / 150));
+
+            timelapseInterval = setInterval(() => {
+                for (let i = 0; i < speed && step < moveHistory.length; i++) {
+                    const idx = moveHistory[step];
+                    userGrid[idx] = answerGrid[idx];
+                    step++;
+                }
+                draw();
+
+                if (step >= moveHistory.length) {
+                    clearInterval(timelapseInterval);
+                    userGrid.set(tempGrid);
+                    isTimelapsePlaying = false;
+                    draw();
+                }
+            }, 16);
+        }
+
+        function skipTimelapse() {
+            if (timelapseInterval) clearInterval(timelapseInterval);
+            for (let idx of moveHistory) {
+                userGrid[idx] = answerGrid[idx];
+            }
+            isTimelapsePlaying = false;
+            draw();
+        }
+
+        function setupRealtimeSubscription() {
+            if (!supabaseClient || !currentUser) return;
+            if (realtimeChannel) supabaseClient.removeChannel(realtimeChannel);
+
+            realtimeChannel = supabaseClient
+                .channel('public:user_progress')
+                .on('postgres_changes', {
+                    event: '*',
+                    schema: 'public',
+                    table: 'user_progress',
+                    filter: `user_id=eq.${currentUser.id}`
+                }, (payload) => {
+                    const newRow = payload.new;
+                    if (newRow && newRow.category === currentCategory && newRow.level_index === currentLevel && isLevelLoaded && !isTimelapsePlaying) {
+                        const indices = newRow.colored_indices || [];
+                        for (let idx of indices) {
+                            if (idx < userGrid.length) {
+                                userGrid[idx] = answerGrid[idx];
+                            }
+                        }
+                        generatePaletteUI();
+                        updateDashboard();
+                        checkLevelCompletion();
+                        draw();
+                    }
+                })
+                .subscribe();
+        }
+
+        async function initAuthSession() {
+            if (!supabaseClient) {
+                bypassAuth();
+                return;
+            }
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            if (session) {
+                currentUser = session.user;
+                document.getElementById('auth-overlay').classList.remove('active');
+                document.getElementById('user-status').textContent = currentUser.email;
+                document.getElementById('auth-main-btn').textContent = 'Sign Out';
+                setupRealtimeSubscription();
+            } else {
+                document.getElementById('auth-overlay').classList.add('active');
+                document.getElementById('user-status').textContent = 'Offline Mode';
+                document.getElementById('auth-main-btn').textContent = 'Sign In';
+            }
+            await renderPortfolioGallery();
+
+            supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+                const prevUserId = currentUser ? currentUser.id : null;
+                currentUser = session ? session.user : null;
+                const newUserId = currentUser ? currentUser.id : null;
+                
+                document.getElementById('user-status').textContent = currentUser ? currentUser.email : 'Offline Mode';
+                document.getElementById('auth-main-btn').textContent = currentUser ? 'Sign Out' : 'Sign In';
+                
+                if (currentUser) {
+                    document.getElementById('auth-overlay').classList.remove('active');
+                }
+                
+                if (prevUserId !== newUserId) {
+                    if (currentUser) setupRealtimeSubscription();
+                    if (isLevelLoaded) {
+                        await initLevel(currentLevel);
+                    } else {
+                        await renderPortfolioGallery();
+                    }
+                }
+            });
+        }
+
+        function handleAuthBtnClick() {
+            if (currentUser) {
+                logout();
+            } else {
+                document.getElementById('auth-overlay').classList.add('active');
+            }
+        }
+
+        async function handleAuth(type) {
+            if (!supabaseClient) return bypassAuth();
+            const email = document.getElementById('auth-email').value;
+            const password = document.getElementById('auth-password').value;
+            
+            const { data, error } = type === 'login' 
+                ? await supabaseClient.auth.signInWithPassword({ email, password })
+                : await supabaseClient.auth.signUp({ email, password });
+
+            if (error) {
+                alert(error.message);
+            } else {
+                currentUser = data.user;
+                document.getElementById('auth-overlay').classList.remove('active');
+                document.getElementById('user-status').textContent = currentUser.email;
+                document.getElementById('auth-main-btn').textContent = 'Sign Out';
+                setupRealtimeSubscription();
+                await renderPortfolioGallery();
+            }
+        }
+
+        function bypassAuth() {
+            currentUser = null;
+            document.getElementById('auth-overlay').classList.remove('active');
+            document.getElementById('user-status').textContent = 'Offline Mode';
+            document.getElementById('auth-main-btn').textContent = 'Sign In';
+            renderPortfolioGallery();
+        }
+
+        function switchCategory(category) {
+            currentCategory = category;
+            renderCategoryTabs();
+            document.getElementById('custom-url-container').classList.toggle('active', category === 'custom');
+            renderPortfolioGallery();
+        }
+
+        function renderCategoryTabs() {
+            const tabsContainer = document.getElementById('category-tabs');
+            tabsContainer.innerHTML = `
+                <button class="tab-btn ${currentCategory === 'mandala' ? 'active' : ''}" onclick="switchCategory('mandala')">Mandalas</button>
+                <button class="tab-btn ${currentCategory === 'photography' ? 'active' : ''}" onclick="switchCategory('photography')">Photography</button>
+                <button class="tab-btn ${currentCategory === 'custom' ? 'active' : ''}" onclick="switchCategory('custom')">Custom URL</button>
+            `;
+        }
+
+        function toggleInteractionMode() {
+            isPanMode = !isPanMode;
+            const btn = document.getElementById('mode-toggle');
+            btn.textContent = isPanMode ? "Mode: PAN" : "Mode: PAINT";
+            btn.classList.toggle('active', isPanMode);
+        }
+
+        async function fetchWikimediaImageUrl(levelIndex) {
+            const subject = document.getElementById('subject-select').value;
+            const categoryMap = {
+                general: 'Category:Featured_pictures_on_Wikimedia_Commons',
+                landscape: 'Category:Featured_landscapes',
+                animals: 'Category:Featured_animals',
+                architecture: 'Category:Featured_architecture',
+                abstract: 'Category:Abstract_art'
+            };
+
+            const catTitle = categoryMap[subject] || categoryMap.general;
+            const endpoint = 'https://commons.wikimedia.org/w/api.php';
+            const params = new URLSearchParams({
+                action: 'query',
+                generator: 'categorymembers',
+                gcmtitle: catTitle,
+                gcmtype: 'file',
+                gcmlimit: '50',
+                prop: 'imageinfo',
+                iiprop: 'url',
+                iiurlwidth: GRID_SIZE.toString(),
+                format: 'json',
+                origin: '*'
+            });
+
+            const response = await fetch(`${endpoint}?${params.toString()}`);
+            if (!response.ok) throw new Error(`Wikimedia API error: ${response.status}`);
+            
+            const data = await response.json();
+            if (!data.query || !data.query.pages) throw new Error('No Wikimedia media found');
+            
+            const pages = Object.values(data.query.pages);
+            const selectedPage = pages[levelIndex % pages.length];
+            const info = selectedPage.imageinfo && selectedPage.imageinfo[0];
+            
+            if (!info) throw new Error('Invalid Wikimedia image entry');
+            return info.thumburl || info.url;
+        }
+
+        async function initLevel(levelIndex, overrideUrl = null) {
+            isLevelLoaded = false;
+            levelAlreadyCompleted = false;
+            hintMarker = null;
+            moveHistory = [];
+            currentLevel = levelIndex;
+            document.getElementById('level-title').textContent = `${currentCategory.toUpperCase()} #${currentLevel + 1} (${GRID_SIZE}x${GRID_SIZE})`;
+            
+            answerGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
+            userGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
+
+            try {
+                if (currentCategory === 'photography') {
+                    const wikiUrl = await fetchWikimediaImageUrl(currentLevel);
+                    await loadPhotoFromUrl(wikiUrl);
+                } else if (currentCategory === 'custom') {
+                    const userId = currentUser ? currentUser.id : 'guest';
+                    let url = overrideUrl;
+                    
+                    if (!url && currentUser && supabaseClient) {
+                        const { data } = await supabaseClient.from('user_progress')
+                            .select('custom_url')
+                            .eq('user_id', currentUser.id)
+                            .eq('category', 'custom')
+                            .eq('level_index', currentLevel)
+                            .maybeSingle();
+                        if (data && data.custom_url) url = data.custom_url;
+                    }
+                    
+                    if (!url) {
+                        url = localStorage.getItem(`custom_url_${userId}_${currentLevel}`);
+                    }
+                    
+                    if (!url) {
+                        generateDeterministicData(currentLevel);
+                    } else {
+                        customImageUrl = url;
+                        localStorage.setItem(`custom_url_${userId}_${currentLevel}`, url);
+                        await loadPhotoFromUrl(url);
+                    }
+                } else {
+                    generateDeterministicData(currentLevel);
+                }
+            } catch(err) {
+                console.warn("Asset load failed. Falling back to procedural algorithm.", err);
+                generateDeterministicData(currentLevel);
+            }
+
+            await loadState();
+            isLevelLoaded = true;
+            resizeCanvas();
+            resetViewport();
+            generatePaletteUI();
+            startDashboardTimer();
+            applySettingsUI();
+        }
+
+        function loadPhotoFromUrl(url) {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.crossOrigin = "anonymous";
+                let fallbackAttempted = false;
+
+                const processImageData = () => {
+                    let imgData = null;
+                    try {
+                        const offCanvas = document.createElement('canvas');
+                        offCanvas.width = GRID_SIZE;
+                        offCanvas.height = GRID_SIZE;
+                        const offCtx = offCanvas.getContext('2d');
+                        offCtx.drawImage(img, 0, 0, GRID_SIZE, GRID_SIZE);
+                        imgData = offCtx.getImageData(0, 0, GRID_SIZE, GRID_SIZE).data;
+                    } catch (e) {
+                        console.warn("Canvas cross-origin taint detected. Using offline generator.", e);
+                        handleError();
+                        return;
+                    }
+
+                    colorPalette = ['#e0e0e0'];
+                    rgbPaletteParsed = [[224, 224, 224]];
+                    const colorMap = new Map();
+
+                    for (let i = 0; i < imgData.length; i += 4) {
+                        if (imgData[i + 3] < 128) continue;
+                        const r = Math.round(imgData[i] / 16) * 16;
+                        const g = Math.round(imgData[i + 1] / 16) * 16;
+                        const b = Math.round(imgData[i + 2] / 16) * 16;
+                        const key = `${r},${g},${b}`;
+                        colorMap.set(key, (colorMap.get(key) || 0) + 1);
+                    }
+
+                    const sortedColors = Array.from(colorMap.entries())
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, TARGET_COLORS_COUNT);
+
+                    sortedColors.forEach(([rgbStr]) => {
+                        const [r, g, b] = rgbStr.split(',').map(Number);
+                        colorPalette.push(`rgb(${r},${g},${b})`);
+                        rgbPaletteParsed.push([r, g, b]);
+                    });
+
+                    userGrid.fill(0);
+                    for (let y = 0; y < GRID_SIZE; y++) {
+                        for (let x = 0; x < GRID_SIZE; x++) {
+                            const pIdx = (y * GRID_SIZE + x) * 4;
+                            const r = imgData[pIdx];
+                            const g = imgData[pIdx + 1];
+                            const b = imgData[pIdx + 2];
+
+                            let closestIdx = 1;
+                            let minDist = Infinity;
+                            for (let i = 1; i < rgbPaletteParsed.length; i++) {
+                                const [pr, pg, pb] = rgbPaletteParsed[i];
+                                const dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2;
+                                if (dist < minDist) {
+                                    minDist = dist;
+                                    closestIdx = i;
+                                }
+                            }
+                            answerGrid[y * GRID_SIZE + x] = closestIdx;
+                        }
+                    }
+                    resolve();
+                };
+
+                const handleError = () => {
+                    if (!fallbackAttempted) {
+                        fallbackAttempted = true;
+                        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${GRID_SIZE}" height="${GRID_SIZE}"><rect width="100%" height="100%" fill="%23222222"/><text x="50%" y="50%" fill="%23ffffff" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="12">Image Unavailable</text></svg>`;
+                        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+                    } else {
+                        generateDeterministicData(currentLevel);
+                        resolve();
+                    }
+                };
+
+                img.onload = processImageData;
+                img.onerror = handleError;
+                img.src = url;
+            });
+        }
+
+        function loadCustomUrlFromInput() {
+            const input = document.getElementById('custom-image-url');
+            if (!input.value) return;
+            const targetUrl = input.value;
+            input.value = '';
+            document.getElementById('home-screen').classList.remove('active');
+            document.getElementById('game-screen').classList.add('active');
+            initLevel(currentLevel, targetUrl);
+        }
+
+        function generateDeterministicData(seed) {
+            let currentSeed = (seed + 1) * 123456789;
+            function nextRandom() {
+                currentSeed = (currentSeed * 1664525 + 1013904223) % 4294967296;
+                return currentSeed / 4294967296;
+            }
+
+            colorPalette = ['#e0e0e0'];
+            rgbPaletteParsed = [[224, 224, 224]];
+
+            for (let i = 1; i <= TARGET_COLORS_COUNT; i++) {
+                const r = Math.floor(nextRandom() * 190) + 40;
+                const g = Math.floor(nextRandom() * 190) + 40;
+                const b = Math.floor(nextRandom() * 190) + 40;
+                colorPalette.push(`rgb(${r},${g},${b})`);
+                rgbPaletteParsed.push([r, g, b]);
+            }
+
+            const centerX = GRID_SIZE / 2;
+            const centerY = GRID_SIZE / 2;
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    let dx = x - centerX, dy = y - centerY;
+                    let r = Math.sqrt(dx * dx + dy * dy);
+                    let angle = Math.atan2(dy, dx);
+                    let val = (Math.sin(r * 0.8) + Math.cos(angle * 12) + 2) / 4;
+                    answerGrid[y * GRID_SIZE + x] = Math.floor(val * (TARGET_COLORS_COUNT - 1)) + 1;
+                }
+            }
+            userGrid.fill(0);
+        }
+
+        function drawMinimap() {
+            if (!settings.showMinimap || !document.getElementById('game-screen').classList.contains('active')) return;
+            
+            mCtx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
+            const ratio = 140 / GRID_SIZE;
+
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    const idx = y * GRID_SIZE + x;
+                    const uColor = userGrid[idx];
+                    if (uColor !== 0) {
+                        mCtx.fillStyle = colorPalette[uColor];
+                    } else {
+                        mCtx.fillStyle = '#222222';
+                    }
+                    mCtx.fillRect(x * ratio, y * ratio, Math.max(1, ratio), Math.max(1, ratio));
+                }
+            }
+
+            const vX = -viewTransform.x / viewTransform.zoom;
+            const vY = -viewTransform.y / viewTransform.zoom;
+            const vW = (canvas.width / (window.devicePixelRatio || 1)) / viewTransform.zoom;
+            const vH = (canvas.height / (window.devicePixelRatio || 1)) / viewTransform.zoom;
+
+            mCtx.strokeStyle = '#00adb5';
+            mCtx.lineWidth = 1.5;
+            mCtx.strokeRect(vX * ratio, vY * ratio, vW * ratio, vH * ratio);
+        }
+
+        function draw() {
+            if (!canvas.width) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.translate(viewTransform.x, viewTransform.y);
+            ctx.scale(viewTransform.zoom, viewTransform.zoom);
+
+            const z = viewTransform.zoom;
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    const idx = y * GRID_SIZE + x;
+                    const uColor = userGrid[idx];
+                    const aColor = answerGrid[idx];
+
+                    if (uColor !== 0) {
+                        ctx.fillStyle = colorPalette[uColor];
+                        ctx.fillRect(x, y, 1.05, 1.05);
+                    } else if (z > 4) {
+                        ctx.fillStyle = (aColor === activeColorId) ? '#b0b0b0' : '#ffffff';
+                        ctx.fillRect(x, y, 1.05, 1.05);
+                        ctx.strokeStyle = '#ddd';
+                        ctx.lineWidth = 1 / z;
+                        ctx.strokeRect(x, y, 1, 1);
+                        ctx.fillStyle = '#666';
+                        ctx.font = '0.4px system-ui';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(aColor, x + 0.5, y + 0.5);
+                    } else {
+                        ctx.fillStyle = '#fff';
+                        ctx.fillRect(x, y, 1.05, 1.05);
+                    }
+                }
+            }
+
+            if (hintMarker) {
+                const elapsed = performance.now() - hintMarker.startTime;
+                const progress = elapsed / hintMarker.duration;
+                const radius = 0.5 + (progress * 3.5);
+                const alpha = Math.max(0, 1 - progress);
+
+                ctx.save();
+                
+                ctx.beginPath();
+                ctx.arc(hintMarker.x, hintMarker.y, radius, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(231, 76, 60, ${alpha})`;
+                ctx.lineWidth = 3 / z;
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(hintMarker.x, hintMarker.y, radius * 0.5, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(241, 196, 15, ${alpha * 0.7})`;
+                ctx.lineWidth = 2 / z;
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(hintMarker.x, hintMarker.y, 0.25, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(231, 76, 60, ${alpha})`;
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            ctx.restore();
+            drawMinimap();
+        }
+
+        minimapCanvas.addEventListener('pointerdown', (e) => {
+            const rect = minimapCanvas.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+            const ratio = 140 / GRID_SIZE;
+            const targetGX = mx / ratio;
+            const targetGY = my / ratio;
+
+            const logicalW = canvas.width / (window.devicePixelRatio || 1);
+            const logicalH = canvas.height / (window.devicePixelRatio || 1);
+
+            viewTransform.x = (logicalW / 2) - targetGX * viewTransform.zoom;
+            viewTransform.y = (logicalH / 2) - targetGY * viewTransform.zoom;
+            draw();
+        });
+
+        function getGridCoords(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: Math.floor((clientX - rect.left - viewTransform.x) / viewTransform.zoom),
+                y: Math.floor((clientY - rect.top - viewTransform.y) / viewTransform.zoom)
+            };
+        }
+
+        canvas.addEventListener('pointerdown', (e) => {
+            if (isTimelapsePlaying) {
+                skipTimelapse();
+                return;
+            }
+            canvas.setPointerCapture(e.pointerId);
+            activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+            if (activePointers.size === 2) {
+                isDragging = false;
+                isPanning = false;
+                const p = Array.from(activePointers.values());
+                initialPinchDist = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+                initialZoom = viewTransform.zoom;
+                return;
+            }
+
+            lastPointerPos = { x: e.clientX, y: e.clientY };
+            if (isPanMode || (e.pointerType === 'mouse' && e.button !== 0)) {
+                isPanning = true;
+                return;
+            }
+            
+            const coords = getGridCoords(e.clientX, e.clientY);
+            if (coords.x >= 0 && coords.x < GRID_SIZE && coords.y >= 0 && coords.y < GRID_SIZE) {
+                const idx = coords.y * GRID_SIZE + coords.x;
+                if (userGrid[idx] === 0 && answerGrid[idx] === activeColorId) {
+                    isDragging = true;
+                    userGrid[idx] = activeColorId;
+                    moveHistory.push(idx);
+                    saveState(false);
+                    generatePaletteUI();
+                    updateDashboard();
+                    draw();
+                    checkLevelCompletion();
+                } else {
+                    isPanning = true;
+                }
+            }
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            if (isTimelapsePlaying || !activePointers.has(e.pointerId)) return;
+            activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+            if (activePointers.size === 2 && initialPinchDist) {
+                const p = Array.from(activePointers.values());
+                const currentDist = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+                const factor = currentDist / initialPinchDist;
+                const targetZoom = Math.min(Math.max(initialZoom * factor, 1), 50);
+
+                const midX = (p[0].x + p[1].x) / 2;
+                const midY = (p[0].y + p[1].y) / 2;
+                const rect = canvas.getBoundingClientRect();
+
+                const worldX = (midX - rect.left - viewTransform.x) / viewTransform.zoom;
+                const worldY = (midY - rect.top - viewTransform.y) / viewTransform.zoom;
+
+                viewTransform.x = (midX - rect.left) - worldX * targetZoom;
+                viewTransform.y = (midY - rect.top) - worldY * targetZoom;
+                viewTransform.zoom = targetZoom;
+                draw();
+                return;
+            }
+
+            if (isPanning) {
+                viewTransform.x += e.clientX - lastPointerPos.x;
+                viewTransform.y += e.clientY - lastPointerPos.y;
+                draw();
+            } else if (isDragging) {
+                const coords = getGridCoords(e.clientX, e.clientY);
+                if (coords.x >= 0 && coords.x < GRID_SIZE && coords.y >= 0 && coords.y < GRID_SIZE) {
+                    const idx = coords.y * GRID_SIZE + coords.x;
+                    if (userGrid[idx] === 0 && answerGrid[idx] === activeColorId) {
+                        userGrid[idx] = activeColorId;
+                        moveHistory.push(idx);
+                        saveState(false);
+                        generatePaletteUI();
+                        updateDashboard();
+                        draw();
+                        checkLevelCompletion();
+                    }
+                }
+            }
+            lastPointerPos = { x: e.clientX, y: e.clientY };
+        });
+
+        const clearPointer = (e) => {
+            if (canvas.hasPointerCapture(e.pointerId)) {
+                canvas.releasePointerCapture(e.pointerId);
+            }
+            activePointers.delete(e.pointerId);
+            if (activePointers.size < 2) initialPinchDist = null;
+            if (activePointers.size === 0) { isDragging = false; isPanning = false; }
+        };
+
+        canvas.addEventListener('pointerup', clearPointer);
+        canvas.addEventListener('pointercancel', clearPointer);
+
+        canvas.addEventListener('wheel', (e) => {
+            if (isTimelapsePlaying) return;
+            e.preventDefault();
+            const zoomFactor = e.deltaY < 0 ? 1.2 : 1 / 1.2;
+            const nextZoom = Math.min(Math.max(viewTransform.zoom * zoomFactor, 1), 50);
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            const worldX = (mouseX - viewTransform.x) / viewTransform.zoom;
+            const worldY = (mouseY - viewTransform.y) / viewTransform.zoom;
+
+            viewTransform.zoom = nextZoom;
+            viewTransform.x = mouseX - worldX * viewTransform.zoom;
+            viewTransform.y = mouseY - worldY * viewTransform.zoom;
+            draw();
+        }, { passive: false });
+
+        async function persistToCloud(coloredIndices) {
+            if (!currentUser || !supabaseClient) return false;
+            const payload = {
+                user_id: currentUser.id,
+                category: currentCategory,
+                level_index: currentLevel,
+                colored_indices: Array.from(coloredIndices)
+            };
+            if (currentCategory === 'custom' && customImageUrl) {
+                payload.custom_url = customImageUrl;
+            }
+            
+            const { error } = await supabaseClient
+                .from('user_progress')
+                .upsert(payload, { onConflict: 'user_id,category,level_index' });
+
+            if (error) {
+                console.error("Cloud persist failed:", error.message);
+                return false;
+            }
+            return true;
+        }
+
+        async function saveState(immediate = false) {
+            if (!isLevelLoaded) return;
+
+            const coloredIndices = [];
+            for (let i = 0; i < userGrid.length; i++) {
+                if (userGrid[i] !== 0) coloredIndices.push(i);
+            }
+            const key = getStorageKey(currentCategory, currentLevel);
+            try {
+                localStorage.setItem(key, JSON.stringify(coloredIndices));
+            } catch(e) {
+                console.warn("Storage quota exceeded", e);
+            }
+
+            if (currentUser && supabaseClient) {
+                clearTimeout(saveTimeout);
+                if (immediate) {
+                    return await persistToCloud(coloredIndices);
+                } else {
+                    saveTimeout = setTimeout(() => persistToCloud(coloredIndices), 500);
+                }
+            }
+        }
+
+        async function loadState() {
+            userGrid.fill(0);
+            moveHistory = [];
+            const key = getStorageKey(currentCategory, currentLevel);
+            let coloredIndices = [];
+
+            if (currentUser && supabaseClient) {
+                const { data, error } = await supabaseClient.from('user_progress')
+                    .select('colored_indices, custom_url')
+                    .eq('user_id', currentUser.id)
+                    .eq('category', currentCategory)
+                    .eq('level_index', currentLevel)
+                    .maybeSingle();
+
+                if (!error && data) {
+                    coloredIndices = data.colored_indices || [];
+                    if (data.custom_url) customImageUrl = data.custom_url;
+                    try {
+                        localStorage.setItem(key, JSON.stringify(coloredIndices));
+                    } catch(e){}
+                }
+            }
+
+            if (coloredIndices.length === 0) {
+                const userId = currentUser ? currentUser.id : 'guest';
+                const keyCandidates = [
+                    key,
+                    `grid_save_${userId}_${currentCategory}_${currentLevel}`,
+                    `grid_save_guest_${currentCategory}_${currentLevel}_${GRID_SIZE}`,
+                    `grid_save_guest_${currentCategory}_${currentLevel}`
+                ];
+
+                for (const candidateKey of keyCandidates) {
+                    const raw = localStorage.getItem(candidateKey);
+                    if (raw) {
+                        try {
+                            const parsed = JSON.parse(raw);
+                            if (parsed && parsed.length > 0) {
+                                coloredIndices = parsed;
+                                break;
+                            }
+                        } catch(e) {}
+                    }
+                }
+            }
+
+            for (let idx of coloredIndices) {
+                if (idx < userGrid.length) {
+                    userGrid[idx] = answerGrid[idx];
+                    moveHistory.push(idx);
+                }
+            }
+
+            if (coloredIndices.length >= GRID_SIZE * GRID_SIZE) {
+                levelAlreadyCompleted = true;
+            }
+        }
+
+        function resetViewport() {
+            const logicalW = canvas.width / (window.devicePixelRatio || 1);
+            const logicalH = canvas.height / (window.devicePixelRatio || 1);
+            viewTransform.zoom = (Math.min(logicalW, logicalH) / GRID_SIZE) * 0.8;
+            viewTransform.x = (logicalW - GRID_SIZE * viewTransform.zoom) / 2;
+            viewTransform.y = (logicalH - GRID_SIZE * viewTransform.zoom) / 2;
+        }
+
+        function resizeCanvas() {
+            const container = document.getElementById('main-layout');
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = container.clientWidth * dpr;
+            canvas.height = container.clientHeight * dpr;
+            ctx.scale(dpr, dpr);
+        }
+
+        function generatePaletteUI() {
+            const bar = document.getElementById('palette-bar');
+            bar.innerHTML = '';
+
+            const counts = new Map();
+            for (let i = 0; i < answerGrid.length; i++) {
+                const color = answerGrid[i];
+                if (!counts.has(color)) counts.set(color, { total: 0, filled: 0 });
+                const item = counts.get(color);
+                item.total++;
+                if (userGrid[i] !== 0) item.filled++;
+            }
+
+            let availableColors = [];
+            for (let i = 1; i < colorPalette.length; i++) {
+                const stats = counts.get(i) || { total: 0, filled: 0 };
+                if (stats.total > 0 && stats.filled < stats.total) {
+                    availableColors.push(i);
+                }
+            }
+
+            if (availableColors.length > 0 && !availableColors.includes(activeColorId)) {
+                activeColorId = availableColors[0];
+            }
+
+            for (let i = 1; i < colorPalette.length; i++) {
+                const stats = counts.get(i) || { total: 0, filled: 0 };
+                if (stats.total > 0 && stats.filled >= stats.total) {
+                    continue;
+                }
+
+                const swatch = document.createElement('div');
+                swatch.className = `swatch ${i === activeColorId ? 'selected' : ''}`;
+                swatch.style.backgroundColor = colorPalette[i];
+                swatch.textContent = i;
+                swatch.onclick = () => {
+                    activeColorId = i;
+                    document.querySelectorAll('.swatch').forEach(s => s.classList.remove('selected'));
+                    swatch.classList.add('selected');
+                    draw();
+                };
+                bar.appendChild(swatch);
+            }
+        }
+
+        async function drawPreviewProgress(canvasEl, levelIdx, category, coloredIndices, customUrl = null) {
+            const pCtx = canvasEl.getContext('2d');
+            pCtx.clearRect(0, 0, GRID_SIZE, GRID_SIZE);
+            pCtx.fillStyle = '#d8d8d8';
+            pCtx.fillRect(0, 0, GRID_SIZE, GRID_SIZE);
+
+            if (!coloredIndices || coloredIndices.length === 0) return;
+
+            if (category === 'mandala') {
+                let currentSeed = (levelIdx + 1) * 123456789;
+                function nextRandom() {
+                    currentSeed = (currentSeed * 1664525 + 1013904223) % 4294967296;
+                    return currentSeed / 4294967296;
+                }
+                const palette = ['#e0e0e0'];
+                for (let i = 1; i <= TARGET_COLORS_COUNT; i++) {
+                    const r = Math.floor(nextRandom() * 190) + 40;
+                    const g = Math.floor(nextRandom() * 190) + 40;
+                    const b = Math.floor(nextRandom() * 190) + 40;
+                    palette.push(`rgb(${r},${g},${b})`);
+                }
+                const centerX = GRID_SIZE / 2;
+                const centerY = GRID_SIZE / 2;
+
+                coloredIndices.forEach(idx => {
+                    const x = idx % GRID_SIZE;
+                    const y = Math.floor(idx / GRID_SIZE);
+                    let dx = x - centerX, dy = y - centerY;
+                    let r = Math.sqrt(dx * dx + dy * dy);
+                    let angle = Math.atan2(dy, dx);
+                    let val = (Math.sin(r * 0.8) + Math.cos(angle * 12) + 2) / 4;
+                    let colorId = Math.floor(val * (TARGET_COLORS_COUNT - 1)) + 1;
+                    pCtx.fillStyle = palette[colorId];
+                    pCtx.fillRect(x, y, 1, 1);
+                });
+            } else {
+                let imgUrl = customUrl;
+                if (category === 'photography') {
+                    try {
+                        imgUrl = await fetchWikimediaImageUrl(levelIdx);
+                    } catch(e) {
+                        imgUrl = null;
+                    }
+                }
+                if (!imgUrl) return;
+
+                const img = new Image();
+                img.crossOrigin = "anonymous";
+                let attemptedFallback = false;
+
+                const renderImg = () => {
+                    try {
+                        const offCanvas = document.createElement('canvas');
+                        offCanvas.width = GRID_SIZE;
+                        offCanvas.height = GRID_SIZE;
+                        const offCtx = offCanvas.getContext('2d');
+                        offCtx.drawImage(img, 0, 0, GRID_SIZE, GRID_SIZE);
+                        const imgData = offCtx.getImageData(0, 0, GRID_SIZE, GRID_SIZE).data;
+
+                        coloredIndices.forEach(idx => {
+                            const x = idx % GRID_SIZE;
+                            const y = Math.floor(idx / GRID_SIZE);
+                            const pIdx = idx * 4;
+                            pCtx.fillStyle = `rgb(${imgData[pIdx]},${imgData[pIdx+1]},${imgData[pIdx+2]})`;
+                            pCtx.fillRect(x, y, 1, 1);
+                        });
+                    } catch(e) {}
+                };
+
+                img.onload = renderImg;
+                img.onerror = () => {
+                    if (!attemptedFallback) {
+                        attemptedFallback = true;
+                        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${GRID_SIZE}" height="${GRID_SIZE}"><rect width="100%" height="100%" fill="%23222222"/></svg>`;
+                        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+                    }
+                };
+                img.src = imgUrl;
+            }
+        }
+
+        function createLevelCard(levelIdx, progressCount, coloredIndices = [], customUrl = null) {
+            const card = document.createElement('div');
+            card.className = 'level-card';
+            card.innerHTML = `
+                <canvas class="gallery-preview" width="${GRID_SIZE}" height="${GRID_SIZE}"></canvas>
+                <div>${currentCategory.toUpperCase()} #${levelIdx + 1}</div>
+                <div style="font-size:11px; color:#888">${progressCount} / ${GRID_SIZE * GRID_SIZE} px</div>
+            `;
+            const previewCanvas = card.querySelector('.gallery-preview');
+            drawPreviewProgress(previewCanvas, levelIdx, currentCategory, coloredIndices, customUrl);
+
+            card.onclick = async () => {
+                document.getElementById('home-screen').classList.remove('active');
+                document.getElementById('game-screen').classList.add('active');
+                await initLevel(levelIdx);
+            };
+            return card;
+        }
+
+        async function renderPortfolioGallery() {
+            const inProgress = document.getElementById('in-progress-gallery');
+            const completed = document.getElementById('completed-gallery');
+            inProgress.innerHTML = ''; 
+            completed.innerHTML = '';
+
+            const progressMap = new Map();
+            const userId = currentUser ? currentUser.id : 'guest';
+            const prefix = `grid_save_${userId}_${currentCategory}_`;
+
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && (key.startsWith(prefix) || key.startsWith(`grid_save_guest_${currentCategory}_`))) {
+                    const parts = key.split('_');
+                    const levelIdx = parseInt(parts[3], 10);
+                    if (!isNaN(levelIdx)) {
+                        try {
+                            const saved = JSON.parse(localStorage.getItem(key) || '[]');
+                            if (saved.length > 0) {
+                                const cUrl = localStorage.getItem(`custom_url_${userId}_${levelIdx}`);
+                                progressMap.set(levelIdx, { count: saved.length, indices: saved, customUrl: cUrl });
+                            }
+                        } catch(e){}
+                    }
+                }
+            }
+
+            if (currentUser && supabaseClient) {
+                const { data, error } = await supabaseClient.from('user_progress')
+                    .select('level_index, colored_indices, custom_url')
+                    .eq('user_id', currentUser.id)
+                    .eq('category', currentCategory);
+
+                if (!error && data) {
+                    for (const row of data) {
+                        const indices = row.colored_indices || [];
+                        if (indices.length > 0) {
+                            progressMap.set(row.level_index, { count: indices.length, indices, customUrl: row.custom_url });
+                            try {
+                                localStorage.setItem(`${prefix}${row.level_index}_${GRID_SIZE}`, JSON.stringify(indices));
+                            } catch(e){}
+                        }
+                    }
+                }
+            }
+
+            progressMap.forEach((data, levelIdx) => {
+                if (activeTheme !== 'all' && getLevelTheme(levelIdx) !== activeTheme) return;
+
+                const card = createLevelCard(levelIdx, data.count, data.indices, data.customUrl);
+                if (data.count >= GRID_SIZE * GRID_SIZE) completed.appendChild(card);
+                else inProgress.appendChild(card);
+            });
+
+            for (let i = 0; i < 24; i++) {
+                if (!progressMap.has(i)) {
+                    if (activeTheme === 'all' || getLevelTheme(i) === activeTheme) {
+                        inProgress.appendChild(createLevelCard(i, 0, [], null));
+                    }
+                }
+            }
+        }
+
+        async function returnToGallery() {
+            clearInterval(timerInterval);
+            await saveState(true);
+            isLevelLoaded = false;
+            hintMarker = null;
+            customImageUrl = "";
+            document.getElementById('game-screen').classList.remove('active');
+            document.getElementById('home-screen').classList.add('active');
+            await renderPortfolioGallery();
+        }
+
+        async function moveLevel(dir) {
+            clearInterval(timerInterval);
+            await saveState(true);
+            isLevelLoaded = false;
+            hintMarker = null;
+            customImageUrl = "";
+            const next = currentLevel + dir;
+            if (next >= 0 && next < TOTAL_LEVELS) await initLevel(next);
+        }
+
+        async function logout() {
+            if (isLevelLoaded) {
+                await saveState(true);
+            }
+            if (realtimeChannel && supabaseClient) {
+                supabaseClient.removeChannel(realtimeChannel);
+            }
+            if (supabaseClient) {
+                await supabaseClient.auth.signOut();
+            }
+            currentUser = null;
+            location.reload();
+        }
+
+        window.addEventListener('resize', () => { resizeCanvas(); draw(); });
+        window.addEventListener('visibilitychange', async () => {
+            if (document.visibilityState === 'hidden') await saveState(true);
+        });
+        window.addEventListener('pagehide', async () => await saveState(true));
+        window.addEventListener('beforeunload', async () => await saveState(true));
+
+        window.addEventListener('load', async () => {
+            loadSettings();
+            renderCategoryTabs();
+            if (supabaseClient) {
+                await initAuthSession();
+            } else {
+                bypassAuth();
+            }
+        });
+    </script>
+</body>
+</html>
